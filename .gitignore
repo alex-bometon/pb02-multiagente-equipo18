@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local generated data
+chroma/
+output/
+*.sqlite
+*.sqlite3
+*.db
+
+# macOS
+.DS_Store
+
+# Local logs
+*.log
