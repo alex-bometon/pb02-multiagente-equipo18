@@ -1,0 +1,61 @@
+# Guía — Calidad del aire Madrid (mini-RAG)
+
+## Origen
+
+Red de vigilancia del Ayuntamiento de Madrid (Sistema Integral de Calidad del Aire).
+Datos abiertos en [datos.madrid.es](https://datos.madrid.es) y API de tiempo real.
+
+## Estaciones (ejemplos)
+
+| Código / nombre | Zona orientativa | Tipo habitual |
+|-----------------|------------------|---------------|
+| Escuelas Aguirre / 11 | Centro / Salamanca | Tráfico / urbana |
+| Plaza del Carmen | Centro | Urbana de fondo |
+| Cuatro Caminos | Norte-centro | Tráfico |
+| Casa de Campo | Oeste | Suburbana / fondo |
+
+Para una consulta útil conviene fijar **zona** (o estación) y **contaminante**.
+
+## Contaminantes y códigos de magnitud
+
+| Código | Contaminante | Notas |
+|--------|--------------|--------|
+| **8** | NO2 | Dióxido de nitrógeno (tráfico) |
+| **10** | PM10 | Partículas ≤10 µm |
+| **9** | PM2.5 | Partículas finas |
+| **14** | O3 | Ozono |
+| **1** | SO2 | Dióxido de azufre |
+| **6** | CO | Monóxido de carbono |
+| **12** | NOx | Óxidos de nitrógeno |
+
+## Cómo leer datos en tiempo real
+
+La API de tiempo real suele traer, por estación y magnitud, valores horarios `H01`…`H24`
+y códigos de validación `V01`…`V24`:
+
+| Código V | Significado |
+|----------|-------------|
+| **V** | Medición validada / usable en la demo |
+| **N** | No válida |
+| **T** | Provisional |
+
+Los datos en tiempo real **pendientes de validación oficial**: no los trates como dictamen legal.
+
+## Tipos de consulta (preferencias del agente)
+
+- `que_mide` — qué es un contaminante o una magnitud
+- `interpretar` — qué significa un valor alto / cómo contextualizarlo
+- `comparar` — comparar zonas o momentos (con cuidado: hace falta dato)
+- `general` — orientación amplia
+
+## Buenas prácticas (plan de consulta)
+
+1. Fijar zona o estación y contaminante.
+2. Consultar la guía (esta) para códigos y contexto.
+3. Pedir un resumen a la API de tiempo real (o fallback si no hay red).
+4. No inventar umbrales oficiales ni mediciones si la tool no las aportó.
+5. Si falta dato, proponer el siguiente paso (mapa de la red, portal open data).
+
+## Fuente
+
+Ayuntamiento de Madrid — datos.madrid.es · licencia CC BY 4.0
