@@ -13,7 +13,9 @@ __pycache__/
 
 # Local generated data
 chroma/
-output/
+output/*
+!output/chunks.json
+!output/embeddings.json
 *.sqlite
 *.sqlite3
 *.db
