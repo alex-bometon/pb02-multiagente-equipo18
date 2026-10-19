@@ -12,6 +12,7 @@ from typing import Any
 
 from config import GENERATION_MODEL, TOP_K
 from src.generate import (
+    CIUDADES_FUERA_DE_MADRID,
     MENSAJE_ABSTENCION,
     _es_otra_ciudad,
     generar_respuesta,
@@ -167,6 +168,31 @@ def _extraer_ubicacion_movil(pregunta: str) -> tuple[str | None, str | None]:
             if not PATRON_DIA.fullmatch(nombre):
                 return nombre, None
     return None, None
+
+
+def _es_fuera_de_dominio_estructurado(
+    pregunta: str,
+    *,
+    es_horario_movil: bool,
+) -> bool:
+    """Detecta ciudades externas antes de consultar las paradas de Madrid.
+
+    Reutiliza la lista de ciudades de generación, sin duplicarla.
+    También cubre «punto limpio móvil de Barcelona», que no coincide
+    con el patrón genérico de «en Barcelona». No interpreta calles
+    como distritos ni afecta a las consultas semánticas ordinarias.
+    """
+    if _es_otra_ciudad(pregunta):
+        return True
+    if not es_horario_movil:
+        return False
+
+    distrito, direccion = _extraer_ubicacion_movil(pregunta)
+    return bool(
+        distrito
+        and not direccion
+        and _normalizar(distrito) in CIUDADES_FUERA_DE_MADRID
+    )
 
 
 def _resultado_abstencion(texto: str, motivo: str) -> dict:
@@ -354,7 +380,10 @@ def responder(
 
     es_catalogo = _es_consulta_catalogo(normalizada)
     es_horario_movil = _es_consulta_horarios_moviles(normalizada)
-    if (es_catalogo or es_horario_movil) and _es_otra_ciudad(limpia):
+    consulta_estructurada = es_catalogo or es_horario_movil
+    if consulta_estructurada and _es_fuera_de_dominio_estructurado(
+        normalizada, es_horario_movil=es_horario_movil
+    ):
         resultado = _resultado_abstencion(
             MENSAJE_ABSTENCION, "fuera_de_dominio"
         )

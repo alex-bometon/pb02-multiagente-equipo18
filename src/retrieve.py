@@ -519,14 +519,17 @@ def consultar_catalogo_residuos() -> dict:
             and not isinstance(fila, bool)
             and fila > 0
         )
-        if fila_valida and fila in filas_vistas:
+        # source_row se reinicia para cada grupo de destino en el CSV.
+        # Una fila solo es duplicada dentro del mismo destino.
+        clave = destino.strip()
+        identificador_fila = (_normalizar_texto(clave), fila)
+        if fila_valida and identificador_fila in filas_vistas:
             duplicados += 1
             continue
         if fila_valida:
-            filas_vistas.add(fila)
+            filas_vistas.add(identificador_fila)
 
         rutas.add(ruta.strip())
-        clave = destino.strip()
         grupo = agrupados.setdefault(
             clave, {"destino": clave, "cantidad": 0, "ejemplos": []}
         )
