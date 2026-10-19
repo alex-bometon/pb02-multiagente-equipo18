@@ -25,6 +25,10 @@ from src.gemini_client import crear_cliente_gemini
 logger = logging.getLogger(__name__)
 
 
+class SalidaGeneracionInvalida(RuntimeError):
+    """Gemini respondió, pero su salida no supera la validación."""
+
+
 # Límites propios de este módulo. La auditoría podrá trasladar a
 # config.py aquellos que deban compartirse con otros componentes.
 MAX_PREGUNTA_CARACTERES = 500
@@ -101,6 +105,7 @@ REGLAS OBLIGATORIAS:
 - En una respuesta afirmativa, indica al final de cada afirmación
   importante referencias reales [C1], [C2], etc.; incluye esos IDs
   también en el campo 'citas'. Usa solo IDs proporcionados.
+- Escribe cada cita por separado: [C1] [C2], no [C1, C2].
 - El campo 'citas' debe contener exactamente los IDs presentes en la
   respuesta, sin incluir referencias que no se mencionen en el texto.
 - Si te abstienes, usa el motivo apropiado y devuelve citas=[].
@@ -265,10 +270,38 @@ def _solicitar_generacion(cliente: Any, pregunta: str, contexto: str):
     raise RuntimeError("No se pudo ejecutar la generación.")
 
 
-def _descartar_salida(causa: str) -> dict:
-    """Registra un rechazo estructural sin divulgar la salida del modelo."""
+def _descartar_salida(causa: str) -> None:
+    """Señala un fallo estructural sin divulgar el texto de Gemini."""
     logger.warning("Salida de Gemini rechazada: %s", causa)
-    return _abstenerse("evidencia_insuficiente")
+    raise SalidaGeneracionInvalida(
+        f"La salida de Gemini no cumple el contrato: {causa}."
+    )
+
+
+def _normalizar_citas_respuesta(respuesta: str) -> tuple[str, set[str]]:
+    """Acepta citas separadas o agrupadas y comprueba su sintaxis.
+
+    Convierte '[C1, C2]' en '[C1] [C2]' sin alterar el contenido
+    argumentativo. No interpreta como citas las referencias sin
+    corchetes ni los grupos con identificadores malformados.
+    """
+    def expandir(coincidencia: re.Match) -> str:
+        contenido = coincidencia.group(1).strip()
+        if not re.fullmatch(r"C\d+(?:\s*,\s*C\d+)*", contenido):
+            return coincidencia.group(0)
+
+        identificadores = re.findall(r"C\d+", contenido)
+        return " ".join(f"[{identificador}]" for identificador in
+                        identificadores)
+
+    normalizada = re.sub(r"\[([^\[\]]*)\]", expandir, respuesta)
+    menciones = set(re.findall(r"\[C\d+\]", normalizada))
+    sin_citas = re.sub(r"\[C\d+\]", "", normalizada)
+
+    if re.search(r"\bC\d+\b", sin_citas):
+        raise ValueError("Identificadores de cita con formato inválido")
+
+    return normalizada, menciones
 
 
 def _interpretar_respuesta(resultado: Any, referencias: dict) -> dict:
@@ -276,10 +309,10 @@ def _interpretar_respuesta(resultado: Any, referencias: dict) -> dict:
     try:
         datos = json.loads(resultado.text)
     except (TypeError, ValueError, AttributeError):
-        return _descartar_salida("JSON o citas no válidas")
+        _descartar_salida("JSON ilegible")
 
     if not isinstance(datos, dict):
-        return _descartar_salida("JSON o citas no válidas")
+        _descartar_salida("estructura JSON incorrecta")
 
     respuesta = datos.get("respuesta")
     abstencion = datos.get("abstencion")
@@ -293,29 +326,31 @@ def _interpretar_respuesta(resultado: Any, referencias: dict) -> dict:
         or not isinstance(motivo, str)
         or not isinstance(citas, list)
     ):
-        return _descartar_salida("JSON o citas no válidas")
+        _descartar_salida("tipos o campos de respuesta incorrectos")
 
     if abstencion:
-        if motivo not in MOTIVOS_ABSTENCION:
-            return _descartar_salida("JSON o citas no válidas")
-        if citas:
-            return _descartar_salida("JSON o citas no válidas")
+        if motivo not in MOTIVOS_ABSTENCION or citas:
+            _descartar_salida("abstención con motivo o citas inválidos")
         logger.info("Gemini solicita abstención: %s", motivo)
         return _abstenerse(motivo, respuesta)
 
     if motivo != "ninguno" or not citas:
-        return _descartar_salida("JSON o citas no válidas")
+        _descartar_salida("respuesta afirmativa sin motivo o citas válidas")
 
     if any(
         not isinstance(cita, str) or cita not in referencias
         for cita in citas
     ):
-        return _descartar_salida("JSON o citas no válidas")
+        _descartar_salida("citas ajenas al contexto recuperado")
 
-    menciones = set(re.findall(r"\[C\d+\]", respuesta))
+    try:
+        respuesta, menciones = _normalizar_citas_respuesta(respuesta)
+    except ValueError:
+        _descartar_salida("formato de marcadores de cita inválido")
+
     citadas = {f"[{cita}]" for cita in citas}
     if not menciones or menciones != citadas:
-        return _descartar_salida("JSON o citas no válidas")
+        _descartar_salida("citas del texto distintas del campo citas")
 
     fuentes = []
     visitadas = set()
@@ -351,6 +386,7 @@ def generar_respuesta(
     Raises:
         ValueError: Pregunta o estructura de entrada incorrectas.
         RuntimeError: Fallo técnico persistente de la API de Gemini.
+        SalidaGeneracionInvalida: JSON o citas fuera de contrato.
     """
     pregunta = _validar_pregunta(pregunta)
 

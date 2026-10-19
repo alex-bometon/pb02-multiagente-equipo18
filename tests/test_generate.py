@@ -227,20 +227,20 @@ def test_elimina_citas_duplicadas_sin_perder_el_orden(cliente, chunks):
         }),
     ],
 )
-def test_salida_json_invalida_produce_abstencion(
+def test_salida_json_invalida_lanza_error_de_contrato(
     texto_modelo, cliente, chunks
 ):
     cliente.models.generate_content.return_value = SimpleNamespace(
         text=texto_modelo
     )
 
-    resultado = generate.generar_respuesta(
-        "¿Dónde reciclo?", chunks, client=cliente
-    )
+    with pytest.raises(generate.SalidaGeneracionInvalida, match="contrato"):
+        generate.generar_respuesta(
+            "¿Dónde reciclo?", chunks, client=cliente
+        )
 
-    assert resultado["abstencion"] is True
-    assert resultado["motivo"] == "evidencia_insuficiente"
-    assert resultado["fuentes"] == []
+    cliente.models.generate_content.assert_called_once()
+    cliente.close.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -262,13 +262,153 @@ def test_rechaza_citas_inexistentes_o_incoherentes(
         respuesta, citas=citas, motivo=motivo
     )
 
-    resultado = generate.generar_respuesta(
-        "¿Dónde reciclo?", chunks, client=cliente
+    with pytest.raises(generate.SalidaGeneracionInvalida, match="contrato"):
+        generate.generar_respuesta(
+            "¿Dónde reciclo?", chunks, client=cliente
+        )
+
+    cliente.models.generate_content.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("Ambos destinos [C1, C2].", "Ambos destinos [C1] [C2]."),
+        ("Ambos destinos [C1,C2].", "Ambos destinos [C1] [C2]."),
+        ("Ambos destinos [ C1,  C2 ].", "Ambos destinos [C1] [C2]."),
+        ("Ambos destinos [C1,\nC2].", "Ambos destinos [C1] [C2]."),
+        (
+            "Destinos [C1, C1, C2].",
+            "Destinos [C1] [C1] [C2].",
+        ),
+    ],
+)
+def test_acepta_y_normaliza_citas_agrupadas(
+    texto, esperado, cliente, chunks
+):
+    cliente.models.generate_content.return_value = _respuesta_modelo(
+        texto, citas=["C1", "C2"]
     )
 
-    assert resultado["abstencion"] is True
-    assert resultado["motivo"] == "evidencia_insuficiente"
-    assert resultado["fuentes"] == []
+    resultado = generate.generar_respuesta(
+        "¿Dónde van ambos residuos?", chunks, client=cliente
+    )
+
+    assert resultado["respuesta"] == esperado
+    assert resultado["abstencion"] is False
+    assert resultado["motivo"] is None
+    assert [fuente["chunk_id"] for fuente in resultado["fuentes"]] == [
+        "C1", "C2"
+    ]
+
+
+def test_grupos_y_marcadores_separados_conservan_el_texto(
+    cliente, chunks
+):
+    cliente.models.generate_content.return_value = _respuesta_modelo(
+        "Envases [C1, C2]; restos [C2].", citas=["C2", "C1"]
+    )
+
+    resultado = generate.generar_respuesta(
+        "¿Qué hago con cada residuo?", chunks, client=cliente
+    )
+
+    assert resultado["respuesta"] == "Envases [C1] [C2]; restos [C2]."
+    assert [fuente["chunk_id"] for fuente in resultado["fuentes"]] == [
+        "C2", "C1"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("respuesta", "citas"),
+    [
+        ("Respuesta [C1; C2]", ["C1", "C2"]),
+        ("Respuesta [C1 C2]", ["C1", "C2"]),
+        ("Respuesta [C1, otro]", ["C1"]),
+        ("Respuesta [C1] y C2", ["C1"]),
+        ("Respuesta [C1, C2]", ["C1"]),
+        ("Respuesta [C1, C2]", ["C2"]),
+        ("Respuesta [C1, C2, C3]", ["C1", "C2"]),
+    ],
+)
+def test_rechaza_grupos_de_citas_invalidos_o_incoherentes(
+    respuesta, citas, cliente, chunks
+):
+    cliente.models.generate_content.return_value = _respuesta_modelo(
+        respuesta, citas=citas
+    )
+
+    with pytest.raises(generate.SalidaGeneracionInvalida):
+        generate.generar_respuesta(
+            "¿Dónde reciclo?", chunks, client=cliente
+        )
+
+
+@pytest.mark.parametrize("texto", [None, "", "JSON: {citas}"])
+def test_respuesta_modelo_ilegible_lanza_error(
+    texto, cliente, chunks
+):
+    cliente.models.generate_content.return_value = SimpleNamespace(
+        text=texto
+    )
+
+    with pytest.raises(generate.SalidaGeneracionInvalida):
+        generate.generar_respuesta(
+            "¿Dónde reciclo?", chunks, client=cliente
+        )
+
+
+def test_diagnostico_no_filtra_contenido_original(
+    caplog, cliente, chunks
+):
+    contenido_privado = "dato_privado_que_no_debe_aparecer"
+    cliente.models.generate_content.return_value = SimpleNamespace(
+        text=contenido_privado
+    )
+
+    with pytest.raises(generate.SalidaGeneracionInvalida):
+        generate.generar_respuesta(
+            "¿Dónde reciclo?", chunks, client=cliente
+        )
+
+    assert "JSON ilegible" in caplog.text
+    assert contenido_privado not in caplog.text
+
+
+def test_salida_invalida_no_reintenta_y_no_cierra_cliente_inyectado(
+    monkeypatch, cliente, chunks
+):
+    dormir = Mock()
+    monkeypatch.setattr(generate.time, "sleep", dormir)
+    cliente.models.generate_content.return_value = _respuesta_modelo(
+        "La respuesta cita [C99].", citas=["C99"]
+    )
+
+    with pytest.raises(generate.SalidaGeneracionInvalida):
+        generate.generar_respuesta(
+            "¿Dónde reciclo?", chunks, client=cliente
+        )
+
+    cliente.models.generate_content.assert_called_once()
+    cliente.close.assert_not_called()
+    dormir.assert_not_called()
+
+
+def test_cliente_propio_se_cierra_ante_salida_invalida(
+    monkeypatch, chunks
+):
+    cliente_propio = Mock()
+    cliente_propio.models.generate_content.return_value = (
+        _respuesta_modelo("Respuesta [C99]", citas=["C99"])
+    )
+    monkeypatch.setattr(
+        generate, "crear_cliente_gemini", lambda: cliente_propio
+    )
+
+    with pytest.raises(generate.SalidaGeneracionInvalida):
+        generate.generar_respuesta("¿Dónde reciclo?", chunks)
+
+    cliente_propio.close.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -313,28 +453,27 @@ def test_ambiguedad_permite_pedir_aclaracion(cliente, chunks):
     }
 
 
-def test_abstencion_con_citas_o_motivo_desconocido(cliente, chunks):
+@pytest.mark.parametrize(
+    ("motivo", "citas"),
+    [
+        ("ambiguedad", ["C1"]),
+        ("otro", []),
+    ],
+)
+def test_abstencion_con_citas_o_motivo_desconocido_lanza_error(
+    motivo, citas, cliente, chunks
+):
     cliente.models.generate_content.return_value = _respuesta_modelo(
         "No dispongo de pruebas.",
         abstencion=True,
-        motivo="ambiguedad",
-        citas=["C1"],
+        motivo=motivo,
+        citas=citas,
     )
 
-    resultado = generate.generar_respuesta(
-        "¿Dónde reciclo?", chunks, client=cliente
-    )
-    assert resultado["motivo"] == "evidencia_insuficiente"
-
-    cliente.models.generate_content.return_value = _respuesta_modelo(
-        "No dispongo de pruebas.",
-        abstencion=True,
-        motivo="otro",
-    )
-    resultado = generate.generar_respuesta(
-        "¿Dónde reciclo?", chunks, client=cliente
-    )
-    assert resultado["motivo"] == "evidencia_insuficiente"
+    with pytest.raises(generate.SalidaGeneracionInvalida, match="contrato"):
+        generate.generar_respuesta(
+            "¿Dónde reciclo?", chunks, client=cliente
+        )
 
 
 def test_contexto_contiene_ids_fuentes_y_metadatos(cliente, chunks):
