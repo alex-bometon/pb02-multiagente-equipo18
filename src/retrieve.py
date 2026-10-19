@@ -200,18 +200,26 @@ def _distritos_del_indice(coleccion) -> set[str]:
     }
 
 
+def _normalizar_distrito(nombre: str) -> str:
+    """Unifica tildes, mayúsculas y separadores de los distritos."""
+    normalizado = _normalizar_texto(nombre)
+    return re.sub(r"[\s-]+", " ", normalizado).strip()
+
+
 def _detectar_distritos(
     pregunta: str,
     coleccion,
     modalidad: str | None,
 ) -> list[str]:
-    """Reconoce distritos explícitos validados contra el corpus."""
+    """Detecta un distrito y conserva todas sus variantes en el índice."""
     if modalidad is None and "distrito" not in pregunta:
         return []
 
+    pregunta_normalizada = _normalizar_distrito(pregunta)
     encontrados = []
+
     for distrito in _distritos_del_indice(coleccion):
-        nombre = re.escape(_normalizar_texto(distrito))
+        nombre = re.escape(_normalizar_distrito(distrito))
         patrones = [
             rf"\bdistrito\s+(?:de\s+)?{nombre}(?!\w)",
         ]
@@ -220,11 +228,14 @@ def _detectar_distritos(
                 rf"\b(?:de|del|en|por)\s+(?:el\s+)?{nombre}(?!\w)"
             )
 
-        coincide = any(re.search(patron, pregunta) for patron in patrones)
-        if "distrito" in pregunta:
-            coincide = coincide or bool(re.search(
-                rf"(?<!\w){nombre}(?!\w)", pregunta
-            ))
+        coincide = any(
+            re.search(patron, pregunta_normalizada)
+            for patron in patrones
+        )
+        if "distrito" in pregunta_normalizada:
+            coincide = coincide or bool(
+                re.search(rf"(?<!\w){nombre}(?!\w)", pregunta_normalizada)
+            )
 
         if coincide:
             encontrados.append(distrito)
@@ -248,14 +259,22 @@ def _construir_filtro(pregunta: str, coleccion) -> dict | None:
         return None
 
     distritos = _detectar_distritos(normalizada, coleccion, modalidad)
-    if len(distritos) > 1:
+    distritos_distintos = {
+        _normalizar_distrito(distrito) for distrito in distritos
+    }
+    if len(distritos_distintos) > 1:
         return None
 
     condiciones = []
     if modalidad is not None:
         condiciones.append({"document_type": modalidad})
     if distritos:
-        condiciones.append({"district": distritos[0]})
+        valor_distrito = (
+            distritos[0]
+            if len(distritos) == 1
+            else {"$in": distritos}
+        )
+        condiciones.append({"district": valor_distrito})
     if not condiciones and _es_consulta_catalogo(normalizada):
         condiciones.append({"source": FUENTE_CATALOGO})
 
