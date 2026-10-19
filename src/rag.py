@@ -30,6 +30,23 @@ PATRON_HORARIO = re.compile(
     r"\b(?:horarios?|horas?|dias?|cuando|pasa|visita)\b"
 )
 PATRON_24H = re.compile(r"\b24\s*(?:h|horas?)\b")
+PATRON_DISPOSITIVO_TELEFONICO = re.compile(
+    r"\b(?:movil(?:es)?|telefonos?|smartphones?|celular(?:es)?)\b"
+)
+PATRON_REPARACION = re.compile(
+    r"\b(?:reparac(?:ion|iones)|repar(?:ar|an|a)|"
+    r"arregl(?:ar|an|o)|servicios?\s+tecnicos?)\b"
+)
+PATRON_BUSQUEDA_SERVICIO = re.compile(
+    r"\b(?:donde|como|cual(?:es)?|hay|cerca|busco|necesito|"
+    r"taller(?:es)?|tiendas?|servicios?|tecnicos?|precio|"
+    r"coste|cuanto|cuesta)\b"
+)
+PATRON_CONTEXTO_RESIDUOS = re.compile(
+    r"\b(?:recicl\w*|residuos?|basura|contenedores?|"
+    r"puntos?\s+limpios?|depositar|desech\w*|"
+    r"tirar|tiro|reutiliz\w*|recogida|deshacerme)\b"
+)
 PATRON_DIRECCION = re.compile(
     r"\b(?:calle|avenida|avda|plaza|paseo|ronda|camino)\s+"
     r"[a-z0-9\s.,\-/]+"
@@ -108,6 +125,22 @@ def _es_consulta_catalogo(pregunta: str) -> bool:
             r"\b(?:catalogo|lista(?:do)?)\b",
             pregunta,
         )
+    )
+
+
+def _es_consulta_reparacion_telefonos(pregunta: str) -> bool:
+    """Reconoce solicitudes explícitas de reparación, no de reciclaje.
+
+    «Móvil» puede designar un teléfono o un punto limpio itinerante.
+    Por eso se exige contexto de reparación de dispositivos y se evita
+    interceptar preguntas que mencionen la gestión de residuos.
+    """
+    if PATRON_CONTEXTO_RESIDUOS.search(pregunta):
+        return False
+    return bool(
+        PATRON_DISPOSITIVO_TELEFONICO.search(pregunta)
+        and PATRON_REPARACION.search(pregunta)
+        and PATRON_BUSQUEDA_SERVICIO.search(pregunta)
     )
 
 
@@ -381,7 +414,13 @@ def responder(
     es_catalogo = _es_consulta_catalogo(normalizada)
     es_horario_movil = _es_consulta_horarios_moviles(normalizada)
     consulta_estructurada = es_catalogo or es_horario_movil
-    if consulta_estructurada and _es_fuera_de_dominio_estructurado(
+    if _es_consulta_reparacion_telefonos(normalizada):
+        resultado = _resultado_abstencion(
+            MENSAJE_ABSTENCION, "fuera_de_dominio"
+        )
+        chunks = []
+        fin_retrieval = perf_counter()
+    elif consulta_estructurada and _es_fuera_de_dominio_estructurado(
         normalizada, es_horario_movil=es_horario_movil
     ):
         resultado = _resultado_abstencion(
