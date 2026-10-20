@@ -1,0 +1,31 @@
+# PB02 — ReciclaTIA multiagente
+# Entorno recomendado: Python 3.11 o 3.12
+
+# RAG: datos, limpieza, chunking y evaluacion
+pandas>=2.2,<3
+numpy>=1.26,<3
+beautifulsoup4>=4.12,<5
+langchain-text-splitters>=1.1,<2
+
+# Gemini: embeddings, generacion y multimodalidad
+google-genai>=2.0,<3
+python-dotenv>=1.0,<2
+
+# Base vectorial persistente (cliente nativo de ChromaDB)
+chromadb>=1.5,<2
+
+# Multiagente: LangGraph, contratos de tools e integracion LLM
+langgraph>=1.2,<2
+langchain-core>=1.4,<2
+langchain-google-genai>=4.3,<5
+
+# Herramienta de API externa / HTTP
+requests>=2.31,<3
+
+# Interfaz web, imagenes y futura autenticacion (si se recupera)
+streamlit>=1.60,<2
+Pillow>=11,<13
+bcrypt>=4.2,<6
+
+# Tests
+pytest>=8,<10
