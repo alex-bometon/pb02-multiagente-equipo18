@@ -5,10 +5,7 @@ ni de la orquestación multiagente.
 """
 
 import json
-import logging
-import re
 import time
-import unicodedata
 from typing import Any
 
 from google.genai import errors, types
@@ -17,49 +14,29 @@ from config import (
     GENERATION_MAX_RETRIES,
     GENERATION_MODEL,
     GENERATION_RETRY_SECONDS,
+    MAX_CONTEXTO_CARACTERES,
+    MAX_PREGUNTA_CARACTERES,
     TOP_K,
 )
+from src.domain import CIUDADES_FUERA_DE_MADRID, _es_otra_ciudad
 from src.gemini_client import crear_cliente_gemini
-
-
-logger = logging.getLogger(__name__)
-
-
-class SalidaGeneracionInvalida(RuntimeError):
-    """Gemini respondió, pero su salida no supera la validación."""
+from src.input_validation import validar_pregunta as _validar_pregunta
+from src.text_utils import normalizar_texto as _normalizar_texto
+from src.generation_validation import (
+    MENSAJE_ABSTENCION,
+    MOTIVOS_ABSTENCION,
+    SalidaGeneracionInvalida,
+    _abstenerse,
+    _interpretar_respuesta,
+    _normalizar_citas_respuesta,
+)
 
 
 # Límites propios de este módulo. La auditoría podrá trasladar a
 # config.py aquellos que deban compartirse con otros componentes.
-MAX_PREGUNTA_CARACTERES = 500
-MAX_CONTEXTO_CARACTERES = 12_000
-
-MENSAJE_ABSTENCION = (
-    "No puedo responder con la información disponible en los documentos."
-)
-
-MOTIVOS_ABSTENCION = {
-    "sin_contexto",
-    "evidencia_insuficiente",
-    "fuera_de_dominio",
-    "ambiguedad",
-}
 
 # Reconocimiento conservador de algunas ciudades para las que no
 # existen datos locales en este RAG. No sustituye la revisión del LLM.
-CIUDADES_FUERA_DE_MADRID = (
-    "barcelona",
-    "bilbao",
-    "sevilla",
-    "valencia",
-    "zaragoza",
-    "malaga",
-    "valladolid",
-    "toledo",
-    "alicante",
-    "murcia",
-)
-
 ESQUEMA_RESPUESTA = {
     "type": "OBJECT",
     "properties": {
@@ -127,40 +104,6 @@ def _validar_pregunta(pregunta: str) -> str:
         )
 
     return pregunta
-
-
-def _normalizar_texto(texto: str) -> str:
-    """Normaliza tildes y mayúsculas únicamente para detectar ciudades."""
-    texto = unicodedata.normalize("NFD", texto.casefold())
-    return "".join(
-        caracter for caracter in texto
-        if unicodedata.category(caracter) != "Mn"
-    )
-
-
-def _es_otra_ciudad(pregunta: str) -> bool:
-    """Detecta referencias explícitas inequívocas a otras ciudades."""
-    normalizada = _normalizar_texto(pregunta)
-    ciudades = "|".join(CIUDADES_FUERA_DE_MADRID)
-    return bool(re.search(
-        rf"\b(?:en|para|ciudad\s+de)\s+({ciudades})\b",
-        normalizada,
-    ))
-
-
-def _abstenerse(motivo: str, respuesta: str = "") -> dict:
-    """Devuelve una abstención sin atribuir fuentes no utilizadas."""
-    if motivo == "ambiguedad" and respuesta.strip():
-        texto = respuesta.strip()
-    else:
-        texto = MENSAJE_ABSTENCION
-
-    return {
-        "respuesta": texto,
-        "abstencion": True,
-        "motivo": motivo,
-        "fuentes": [],
-    }
 
 
 def _preparar_contexto(chunks: list[dict]) -> tuple[str, dict]:
@@ -268,103 +211,6 @@ def _solicitar_generacion(cliente: Any, pregunta: str, contexto: str):
             time.sleep(espera)
 
     raise RuntimeError("No se pudo ejecutar la generación.")
-
-
-def _descartar_salida(causa: str) -> None:
-    """Señala un fallo estructural sin divulgar el texto de Gemini."""
-    logger.warning("Salida de Gemini rechazada: %s", causa)
-    raise SalidaGeneracionInvalida(
-        f"La salida de Gemini no cumple el contrato: {causa}."
-    )
-
-
-def _normalizar_citas_respuesta(respuesta: str) -> tuple[str, set[str]]:
-    """Acepta citas separadas o agrupadas y comprueba su sintaxis.
-
-    Convierte '[C1, C2]' en '[C1] [C2]' sin alterar el contenido
-    argumentativo. No interpreta como citas las referencias sin
-    corchetes ni los grupos con identificadores malformados.
-    """
-    def expandir(coincidencia: re.Match) -> str:
-        contenido = coincidencia.group(1).strip()
-        if not re.fullmatch(r"C\d+(?:\s*,\s*C\d+)*", contenido):
-            return coincidencia.group(0)
-
-        identificadores = re.findall(r"C\d+", contenido)
-        return " ".join(f"[{identificador}]" for identificador in
-                        identificadores)
-
-    normalizada = re.sub(r"\[([^\[\]]*)\]", expandir, respuesta)
-    menciones = set(re.findall(r"\[C\d+\]", normalizada))
-    sin_citas = re.sub(r"\[C\d+\]", "", normalizada)
-
-    if re.search(r"\bC\d+\b", sin_citas):
-        raise ValueError("Identificadores de cita con formato inválido")
-
-    return normalizada, menciones
-
-
-def _interpretar_respuesta(resultado: Any, referencias: dict) -> dict:
-    """Valida la salida del modelo y obtiene fuentes del contexto."""
-    try:
-        datos = json.loads(resultado.text)
-    except (TypeError, ValueError, AttributeError):
-        _descartar_salida("JSON ilegible")
-
-    if not isinstance(datos, dict):
-        _descartar_salida("estructura JSON incorrecta")
-
-    respuesta = datos.get("respuesta")
-    abstencion = datos.get("abstencion")
-    motivo = datos.get("motivo")
-    citas = datos.get("citas")
-
-    if (
-        not isinstance(respuesta, str)
-        or not respuesta.strip()
-        or type(abstencion) is not bool
-        or not isinstance(motivo, str)
-        or not isinstance(citas, list)
-    ):
-        _descartar_salida("tipos o campos de respuesta incorrectos")
-
-    if abstencion:
-        if motivo not in MOTIVOS_ABSTENCION or citas:
-            _descartar_salida("abstención con motivo o citas inválidos")
-        logger.info("Gemini solicita abstención: %s", motivo)
-        return _abstenerse(motivo, respuesta)
-
-    if motivo != "ninguno" or not citas:
-        _descartar_salida("respuesta afirmativa sin motivo o citas válidas")
-
-    if any(
-        not isinstance(cita, str) or cita not in referencias
-        for cita in citas
-    ):
-        _descartar_salida("citas ajenas al contexto recuperado")
-
-    try:
-        respuesta, menciones = _normalizar_citas_respuesta(respuesta)
-    except ValueError:
-        _descartar_salida("formato de marcadores de cita inválido")
-
-    citadas = {f"[{cita}]" for cita in citas}
-    if not menciones or menciones != citadas:
-        _descartar_salida("citas del texto distintas del campo citas")
-
-    fuentes = []
-    visitadas = set()
-    for cita in citas:
-        if cita not in visitadas:
-            fuentes.append(referencias[cita].copy())
-            visitadas.add(cita)
-
-    return {
-        "respuesta": respuesta.strip(),
-        "abstencion": False,
-        "motivo": None,
-        "fuentes": fuentes,
-    }
 
 
 def generar_respuesta(
