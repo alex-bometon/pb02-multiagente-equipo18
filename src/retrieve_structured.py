@@ -11,6 +11,9 @@ from typing import Callable
 from config import MAX_PREGUNTA_CARACTERES
 from src.text_utils import normalizar_distrito, normalizar_texto
 
+from math import isfinite
+from numbers import Real
+
 
 FUENTE_CATALOGO = "tipos_residuos.csv"
 FUENTE_MOVILES = "puntos_limpios_moviles.csv"
@@ -343,3 +346,126 @@ def listar_destinos_residuos(abrir_coleccion: Callable) -> list[str]:
         and str(metadata["destino"]).strip()
     }
     return sorted(destinos, key=str.casefold)
+
+
+
+def consultar_puntos_limpios_locales(
+    abrir_coleccion: Callable,
+) -> list[dict]:
+    """
+    Recupera puntos limpios geolocalizados desde ChromaDB.
+
+    Utiliza el corpus existente sin generar embeddings
+    ni realizar consultas a Gemini.
+    """
+
+    modalidades = {
+        "punto_limpio_fijo": (
+            "Fijo", "puntos_limpios_fijos.csv"
+        ),
+        "punto_limpio_movil": (
+            "Móvil", "puntos_limpios_moviles.csv"
+        ),
+        "punto_limpio_movil_24h": (
+            "Móvil 24h", "puntos_limpios_moviles_24h.csv"
+        ),
+        "punto_limpio_proximidad": (
+            "Proximidad", "puntos_limpios_proximidad.csv"
+        ),
+    }
+
+    coleccion, _ = abrir_coleccion()
+
+    registros = _obtener_registros(
+        coleccion,
+        {
+            "document_type": {
+                "$in": list(modalidades)
+            }
+        },
+    )
+
+    puntos = []
+
+    for texto, metadata in registros:
+        if not isinstance(texto, str):
+            continue
+
+        if not isinstance(metadata, dict):
+            continue
+
+        tipo_documento = metadata.get("document_type")
+
+        if tipo_documento not in modalidades:
+            continue
+
+        tipo, fuente_esperada = modalidades[tipo_documento]
+
+        if metadata.get("source") != fuente_esperada:
+            continue
+
+        latitud = metadata.get("latitude")
+        longitud = metadata.get("longitude")
+
+        if not all(
+            isinstance(valor, Real)
+            and not isinstance(valor, bool)
+            and isfinite(float(valor))
+            for valor in (latitud, longitud)
+        ):
+            continue
+
+        if not (-90 <= latitud <= 90):
+            continue
+
+        if not (-180 <= longitud <= 180):
+            continue
+
+        direccion = _extraer_campo(texto, "Dirección")
+        distrito = _extraer_campo(texto, "Distrito")
+
+        if not direccion or not distrito:
+            continue
+
+        direccion = direccion.rstrip(".").strip()
+        distrito = distrito.rstrip(".").strip()
+
+        distrito_metadata = metadata.get("district")
+
+        if (
+            not isinstance(distrito_metadata, str)
+            or normalizar_distrito(distrito)
+            != normalizar_distrito(distrito_metadata)
+        ):
+            continue
+
+        horario = _extraer_campo(texto, "Horario")
+
+        dia = (
+            _extraer_campo(texto, "Día")
+            or _extraer_campo(texto, "Día de ubicación")
+        )
+
+        punto = {
+            "id": (
+                f"{fuente_esperada}:"
+                f"{metadata.get('source_row')}"
+            ),
+            "tipo": tipo,
+            "direccion": direccion,
+            "distrito": distrito,
+            "horario_apertura": horario,
+            "horario_cierre": None,
+            "dia_semana": dia,
+            "turno": _extraer_campo(texto, "Turno"),
+            "residuos_url": None,
+            "latitud": float(latitud),
+            "longitud": float(longitud),
+            "fuente": "corpus_local",
+            "documento_origen": fuente_esperada,
+        }
+
+        puntos.append(punto)
+
+    return puntos
+
