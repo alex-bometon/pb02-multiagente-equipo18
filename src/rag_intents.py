@@ -5,7 +5,7 @@ No accede a Gemini, a ChromaDB ni al estado de los agentes.
 
 import re
 
-from src.domain import CIUDADES_FUERA_DE_MADRID, _es_otra_ciudad
+from src.domain import _es_otra_ciudad, evaluar_ambito
 from src.text_utils import normalizar_texto as _normalizar
 
 
@@ -158,23 +158,24 @@ def _es_fuera_de_dominio_estructurado(
     *,
     es_horario_movil: bool,
 ) -> bool:
-    """Detecta ciudades externas antes de consultar las paradas de Madrid.
+    """
+    Detecta consultas fuera de Madrid reutilizando domain.py.
 
-    Reutiliza la lista de ciudades de generación, sin duplicarla.
-    También cubre «punto limpio móvil de Barcelona», que no coincide
-    con el patrón genérico de «en Barcelona». No interpreta calles
-    como distritos ni afecta a las consultas semánticas ordinarias.
+    Evita interpretar una dirección como una ciudad externa
+    y respeta los distritos reconocidos de Madrid.
     """
     if _es_otra_ciudad(pregunta):
         return True
+
     if not es_horario_movil:
         return False
 
     distrito, direccion = _extraer_ubicacion_movil(pregunta)
+
     return bool(
         distrito
         and not direccion
-        and _normalizar(distrito) in CIUDADES_FUERA_DE_MADRID
+        and evaluar_ambito(f"en {distrito}") == "fuera_de_dominio"
     )
 
 

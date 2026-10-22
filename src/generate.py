@@ -15,7 +15,6 @@ from config import (
     GENERATION_MODEL,
     GENERATION_RETRY_SECONDS,
     MAX_CONTEXTO_CARACTERES,
-    MAX_PREGUNTA_CARACTERES,
     TOP_K,
 )
 from src.domain import CIUDADES_FUERA_DE_MADRID, _es_otra_ciudad
@@ -23,12 +22,9 @@ from src.gemini_client import crear_cliente_gemini
 from src.input_validation import validar_pregunta as _validar_pregunta
 from src.text_utils import normalizar_texto as _normalizar_texto
 from src.generation_validation import (
-    MENSAJE_ABSTENCION,
     MOTIVOS_ABSTENCION,
-    SalidaGeneracionInvalida,
     _abstenerse,
     _interpretar_respuesta,
-    _normalizar_citas_respuesta,
 )
 
 
@@ -89,21 +85,6 @@ REGLAS OBLIGATORIAS:
 - No incluyas nombres de archivos, rutas o fuentes inventados.
 - En una respuesta afirmativa, usa abstencion=false y motivo='ninguno'.
 """
-
-
-def _validar_pregunta(pregunta: str) -> str:
-    """Valida la pregunta del usuario y normaliza espacios externos."""
-    if not isinstance(pregunta, str) or not pregunta.strip():
-        raise ValueError("La pregunta debe ser un texto no vacío.")
-
-    pregunta = pregunta.strip()
-    if len(pregunta) > MAX_PREGUNTA_CARACTERES:
-        raise ValueError(
-            "La pregunta no puede superar "
-            f"{MAX_PREGUNTA_CARACTERES} caracteres."
-        )
-
-    return pregunta
 
 
 def _preparar_contexto(chunks: list[dict]) -> tuple[str, dict]:

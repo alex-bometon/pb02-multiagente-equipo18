@@ -8,6 +8,10 @@ import pytest
 
 from config import TOP_K
 from src import generate
+from src.generation_validation import (
+    MENSAJE_ABSTENCION,
+    SalidaGeneracionInvalida,
+)
 
 
 def _respuesta_modelo(
@@ -101,7 +105,7 @@ def test_sin_chunks_abstiene_sin_api(cliente):
     )
 
     assert resultado == {
-        "respuesta": generate.MENSAJE_ABSTENCION,
+        "respuesta": MENSAJE_ABSTENCION,
         "abstencion": True,
         "motivo": "sin_contexto",
         "fuentes": [],
@@ -234,7 +238,7 @@ def test_salida_json_invalida_lanza_error_de_contrato(
         text=texto_modelo
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida, match="contrato"):
+    with pytest.raises(SalidaGeneracionInvalida, match="contrato"):
         generate.generar_respuesta(
             "¿Dónde reciclo?", chunks, client=cliente
         )
@@ -262,7 +266,7 @@ def test_rechaza_citas_inexistentes_o_incoherentes(
         respuesta, citas=citas, motivo=motivo
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida, match="contrato"):
+    with pytest.raises(SalidaGeneracionInvalida, match="contrato"):
         generate.generar_respuesta(
             "¿Dónde reciclo?", chunks, client=cliente
         )
@@ -338,7 +342,7 @@ def test_rechaza_grupos_de_citas_invalidos_o_incoherentes(
         respuesta, citas=citas
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida):
+    with pytest.raises(SalidaGeneracionInvalida):
         generate.generar_respuesta(
             "¿Dónde reciclo?", chunks, client=cliente
         )
@@ -352,7 +356,7 @@ def test_respuesta_modelo_ilegible_lanza_error(
         text=texto
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida):
+    with pytest.raises(SalidaGeneracionInvalida):
         generate.generar_respuesta(
             "¿Dónde reciclo?", chunks, client=cliente
         )
@@ -366,7 +370,7 @@ def test_diagnostico_no_filtra_contenido_original(
         text=contenido_privado
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida):
+    with pytest.raises(SalidaGeneracionInvalida):
         generate.generar_respuesta(
             "¿Dónde reciclo?", chunks, client=cliente
         )
@@ -384,7 +388,7 @@ def test_salida_invalida_no_reintenta_y_no_cierra_cliente_inyectado(
         "La respuesta cita [C99].", citas=["C99"]
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida):
+    with pytest.raises(SalidaGeneracionInvalida):
         generate.generar_respuesta(
             "¿Dónde reciclo?", chunks, client=cliente
         )
@@ -405,7 +409,7 @@ def test_cliente_propio_se_cierra_ante_salida_invalida(
         generate, "crear_cliente_gemini", lambda: cliente_propio
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida):
+    with pytest.raises(SalidaGeneracionInvalida):
         generate.generar_respuesta("¿Dónde reciclo?", chunks)
 
     cliente_propio.close.assert_called_once_with()
@@ -430,7 +434,7 @@ def test_abstenciones_de_modelo_no_inventan_fuentes(
 
     assert resultado["abstencion"] is True
     assert resultado["motivo"] == motivo
-    assert resultado["respuesta"] == generate.MENSAJE_ABSTENCION
+    assert resultado["respuesta"] == MENSAJE_ABSTENCION
     assert resultado["fuentes"] == []
 
 
@@ -470,7 +474,7 @@ def test_abstencion_con_citas_o_motivo_desconocido_lanza_error(
         citas=citas,
     )
 
-    with pytest.raises(generate.SalidaGeneracionInvalida, match="contrato"):
+    with pytest.raises(SalidaGeneracionInvalida, match="contrato"):
         generate.generar_respuesta(
             "¿Dónde reciclo?", chunks, client=cliente
         )
