@@ -24,7 +24,13 @@ def imagen_prueba(tmp_path, monkeypatch):
 
     # Aislar los tests de los archivos reales del proyecto.
     monkeypatch.setattr(
-        "src.tools.describir_imagen.BASE_DIR", tmp_path
+        "src.tools.describir_imagen.BASE_DIR",
+        tmp_path,
+    )
+
+    monkeypatch.setattr(
+        "src.tools.describir_imagen.ASSETS_DIR",
+        directorio,
     )
 
     return ruta

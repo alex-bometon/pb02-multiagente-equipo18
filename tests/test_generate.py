@@ -562,7 +562,7 @@ def test_configuracion_modelo_json_y_temperatura(cliente, chunks):
     argumentos = cliente.models.generate_content.call_args.kwargs
     assert argumentos["model"] == generate.GENERATION_MODEL
     assert argumentos["config"].response_mime_type == "application/json"
-    assert argumentos["config"].temperature == 0
+    assert argumentos["config"].temperature == generate.GENERATION_TEMPERATURE
     esquema = argumentos["config"].response_schema
     if hasattr(esquema, "model_dump"):
         esquema = esquema.model_dump()

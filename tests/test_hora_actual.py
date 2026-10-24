@@ -5,12 +5,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.tools.hora_actual import hora_actual
+from config import TIMEZONE
 
 
 def test_hora_actual():
     """Comprueba el registro, formato y zona horaria de la tool."""
 
-    zona_madrid = ZoneInfo("Europe/Madrid")
+    zona_madrid = ZoneInfo(TIMEZONE)
 
     # Comprobar el registro en LangChain.
     assert hora_actual.name == "hora_actual"

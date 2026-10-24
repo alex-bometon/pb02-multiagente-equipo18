@@ -8,7 +8,7 @@ sin ocultar dependencias ni acoplar esta capa a la orquestación.
 import re
 from typing import Callable
 
-from config import MAX_PREGUNTA_CARACTERES
+from config import MAX_PREGUNTA_CARACTERES, EJEMPLOS_POR_DESTINO
 from src.text_utils import normalizar_distrito, normalizar_texto
 
 from math import isfinite
@@ -18,7 +18,6 @@ from numbers import Real
 FUENTE_CATALOGO = "tipos_residuos.csv"
 FUENTE_MOVILES = "puntos_limpios_moviles.csv"
 TIPO_MOVIL = "punto_limpio_movil"
-EJEMPLOS_POR_DESTINO = 2
 
 
 def _obtener_registros(coleccion, filtro: dict) -> list[tuple]:

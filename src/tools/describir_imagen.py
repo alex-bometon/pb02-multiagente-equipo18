@@ -1,13 +1,19 @@
-
 """Herramienta multimodal para describir residuos en imágenes."""
 
-from pathlib import Path
 
 from google.genai import types
 from langchain_core.tools import tool
 from PIL import Image
 
-from config import BASE_DIR, GENERATION_MODEL
+from config import (
+    BASE_DIR,
+    ASSETS_DIR,
+    IMAGE_MODEL,
+    IMAGE_MAX_BYTES,
+    IMAGE_MAX_PIXELS,
+    IMAGE_ALLOWED_EXTENSIONS,
+    IMAGE_ALLOWED_FORMATS,
+)
 from src.gemini_client import crear_cliente_gemini
 
 
@@ -27,7 +33,7 @@ def describir_imagen(ruta_imagen: str) -> str:
     if not isinstance(ruta_imagen, str) or not ruta_imagen.strip():
         raise ValueError("Debes proporcionar una ruta de imagen.")
 
-    directorio_permitido = (BASE_DIR / "assets").resolve()
+    directorio_permitido = ASSETS_DIR.resolve()
     ruta = (BASE_DIR / ruta_imagen).resolve()
 
     if not ruta.is_relative_to(directorio_permitido):
@@ -36,10 +42,10 @@ def describir_imagen(ruta_imagen: str) -> str:
     if not ruta.is_file():
         raise FileNotFoundError("No se encuentra la imagen indicada.")
 
-    if ruta.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+    if ruta.suffix.lower() not in IMAGE_ALLOWED_EXTENSIONS:
         raise ValueError("Solo se admiten imágenes JPEG o PNG.")
 
-    if ruta.stat().st_size > 5 * 1024 * 1024:
+    if ruta.stat().st_size > IMAGE_MAX_BYTES:
         raise ValueError("La imagen no puede superar los 5 MB.")
 
     # =========================================================
@@ -47,10 +53,10 @@ def describir_imagen(ruta_imagen: str) -> str:
     # =========================================================
 
     with Image.open(ruta) as imagen:
-        if imagen.format not in {"JPEG", "PNG"}:
+        if imagen.format not in IMAGE_ALLOWED_FORMATS:
             raise ValueError("El contenido no es JPEG ni PNG.")
 
-        if imagen.width * imagen.height > 16_000_000:
+        if imagen.width * imagen.height > IMAGE_MAX_PIXELS:
             raise ValueError("La imagen supera los 16 megapíxeles.")
 
         mime_type = {
@@ -68,7 +74,7 @@ def describir_imagen(ruta_imagen: str) -> str:
 
     try:
         resultado = cliente.models.generate_content(
-            model=GENERATION_MODEL,
+            model=IMAGE_MODEL,
             contents=[
                 types.Part.from_bytes(
                     data=ruta.read_bytes(),

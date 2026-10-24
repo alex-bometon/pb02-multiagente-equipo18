@@ -14,6 +14,7 @@ from config import (
     GENERATION_MAX_RETRIES,
     GENERATION_MODEL,
     GENERATION_RETRY_SECONDS,
+    GENERATION_TEMPERATURE,
     MAX_CONTEXTO_CARACTERES,
     TOP_K,
 )
@@ -162,7 +163,7 @@ def _solicitar_generacion(cliente: Any, pregunta: str, contexto: str):
         system_instruction=INSTRUCCIONES_SISTEMA,
         response_mime_type="application/json",
         response_schema=ESQUEMA_RESPUESTA,
-        temperature=0,
+        temperature=GENERATION_TEMPERATURE,
     )
 
     max_intentos = max(1, GENERATION_MAX_RETRIES)
