@@ -31,15 +31,17 @@ class DecisionRuta(TypedDict):
     motivo_correccion: str | None
 
 
+
 # =========================================================
 # IDENTIFICACIÓN DE NECESIDADES
 # =========================================================
 
-# Patrones de intención, no parámetros operativos.
+# Detectores de intención explícita.
+# Son reglas de dominio, no parámetros operativos.
+
 _PATRON_RESIDUOS = re.compile(
     r"\b(?:contenedores?|fraccion(?:es)?|clasific\w*|"
-    r"recicl(?:ar|o|a|an|amos)|tir(?:ar|o|a|an)|"
-    r"deposit(?:ar|o|a|an)|desech\w*|separar)\b"
+    r"recicl\w*|tir\w*|deposit\w*|desech\w*|separ\w*)\b"
     r"|\b(?:tipos?|categorias?|destinos?)\s+(?:de\s+)?"
     r"(?:los\s+)?residuos?\b"
 )
@@ -50,6 +52,17 @@ _PATRON_PUNTOS = re.compile(
     r"paradas?\s+(?:de\s+)?recogida)\b"
 )
 
+# Algunas expresiones solicitan ubicaciones sin identificar
+# claramente el tipo de instalación.
+# En esos casos puede ser necesaria una interpretación LLM.
+_PATRON_UBICACION_INDEFINIDA = re.compile(
+    r"\b(?:cerca(?:\s+de)?|cercan\w*|proxim\w*|"
+    r"por\s+mi\s+zona|en\s+mi\s+barrio|"
+    r"ubicacion|localiz\w*)\b"
+    r"|\b(?:donde\s+(?:puedo|podria|podemos)\s+"
+    r"(?:llevar|entregar|dejar))\b"
+)
+
 _RUTAS = frozenset({
     "residuos",
     "puntos",
@@ -58,8 +71,10 @@ _RUTAS = frozenset({
 })
 
 
-def _necesidades_texto(texto: str) -> tuple[bool, bool]:
-    """Detecta indicios explícitos sin inferir ubicaciones ni resultados."""
+def _necesidades_texto(
+    texto: str,
+) -> tuple[bool, bool]:
+    """Detecta necesidades explícitas en texto normalizado."""
 
     normalizado = normalizar_texto(texto)
 
@@ -69,55 +84,137 @@ def _necesidades_texto(texto: str) -> tuple[bool, bool]:
     )
 
 
-def _necesidades_turno(
+def _senales_iniciales(
     estado: Mapping[str, Any],
-    propuesta: Mapping[str, Any] | None,
-) -> tuple[bool, bool]:
-    """Fija las necesidades al inicio y las conserva durante el turno."""
+) -> tuple[bool, bool, bool]:
+    """Devuelve necesidades reconocidas y posible ambigüedad.
 
-    # Después de la primera decisión no volvemos a clasificar
-    # el pedido: los especialistas necesarios ya están definidos.
-    if estado.get("siguiente"):
-        return (
-            estado.get("necesita_residuos") is True,
-            estado.get("necesita_puntos") is True,
-        )
+    No llama al LLM ni realiza cambios en el estado.
+    """
 
     pedido = estado.get("pedido", "")
 
-    residuos, puntos = _necesidades_texto(
+    texto = normalizar_texto(
         pedido if isinstance(pedido, str) else ""
     )
 
-    # El contexto de revisión sirve para desambiguar un nuevo
-    # mensaje que no expresa por sí mismo una intención clara.
+    residuos, puntos = _necesidades_texto(texto)
+
+    # Una solicitud de proximidad sin instalación explícita
+    # puede necesitar interpretación adicional.
+    ubicacion_indefinida = bool(
+        _PATRON_UBICACION_INDEFINIDA.search(texto)
+    ) and not puntos
+
+    # El contexto previo solo interviene si la consulta
+    # actual no contiene ninguna intención reconocible.
     if not (residuos or puntos):
         contexto = estado.get("contexto_revision", "")
 
         if isinstance(contexto, str):
             residuos, puntos = _necesidades_texto(contexto)
 
-    # Una imagen aportada requiere el especialista de residuos.
+    # Una imagen proporcionada activa residuos.
     if estado.get("ruta_imagen"):
         residuos = True
 
-    # Cuando hay indicios explícitos, no añadimos especialistas
-    # por una propuesta del modelo sin respaldo en el pedido.
-    if residuos or puntos:
-        return residuos, puntos
+    return residuos, puntos, ubicacion_indefinida
 
-    # Para expresiones no reconocidas por las reglas anteriores,
-    # aceptamos la clasificación estructurada del LLM.
-    if isinstance(propuesta, Mapping):
-        r = propuesta.get("necesita_residuos")
-        p = propuesta.get("necesita_puntos")
 
-        if type(r) is bool and type(p) is bool:
-            return r, p
+# =========================================================
+# DECISIÓN DE CONSULTAR AL LLM
+# =========================================================
 
-    # Si no puede identificarse ninguna necesidad, la síntesis
-    # deberá solicitar aclaración sin ejecutar tools arbitrarias.
-    return False, False
+def requiere_llm_supervisor(
+    estado: Mapping[str, Any],
+) -> bool:
+    """Indica si Gemini aporta valor para decidir la ruta.
+
+    Solo se plantea una llamada en la primera visita
+    del supervisor durante el turno.
+
+    En visitas posteriores, los especialistas pendientes
+    y la finalización se determinan mediante Python.
+    """
+
+    # Ya se fijaron las necesidades de este turno.
+    if estado.get("siguiente"):
+        return False
+
+    residuos, puntos, ambigua = _senales_iniciales(
+        estado
+    )
+
+    # Si no se reconoce ninguna especialidad,
+    # necesitamos interpretar la petición.
+    if not (residuos or puntos):
+        return True
+
+    # Si se pide una ubicación sin especificar
+    # qué instalación se busca, la intención
+    # requiere desambiguación.
+    if ambigua:
+        return True
+
+    # El enrutamiento ya está determinado.
+    return False
+
+
+# =========================================================
+# FIJACIÓN DE ESPECIALISTAS POR TURNO
+# =========================================================
+
+def _necesidades_turno(
+    estado: Mapping[str, Any],
+    propuesta: Mapping[str, Any] | None,
+) -> tuple[bool, bool]:
+    """Fija las especialidades necesarias para este turno.
+
+    Las necesidades explícitas tienen prioridad sobre
+    cualquier propuesta del modelo.
+    """
+
+    # Después de la primera decisión, las necesidades
+    # permanecen fijadas hasta finalizar el turno.
+    if estado.get("siguiente"):
+        return (
+            estado.get("necesita_residuos") is True,
+            estado.get("necesita_puntos") is True,
+        )
+
+    residuos, puntos, ambigua = _senales_iniciales(
+        estado
+    )
+
+    # Solo admitimos clasificación LLM cuando la consulta
+    # necesita interpretación adicional.
+    if (
+        ambigua or not (residuos or puntos)
+    ) and isinstance(propuesta, Mapping):
+
+        sugerencia_residuos = propuesta.get(
+            "necesita_residuos"
+        )
+
+        sugerencia_puntos = propuesta.get(
+            "necesita_puntos"
+        )
+
+        if (
+            type(sugerencia_residuos) is bool
+            and type(sugerencia_puntos) is bool
+        ):
+            # El modelo puede añadir una necesidad
+            # justificada por la ambigüedad, pero
+            # no desactivar una necesidad explícita.
+            return (
+                residuos or sugerencia_residuos,
+                puntos or sugerencia_puntos,
+            )
+
+    # Fallback determinista.
+    # No se inventa una especialidad desconocida.
+    return residuos, puntos
 
 
 # =========================================================
@@ -263,22 +360,14 @@ def resolver_enrutamiento(
         if isinstance(valor, str) and valor in _RUTAS:
             solicitada = valor
 
-    corregida = solicitada != ruta
+    corregida = propuesta is not None and solicitada != ruta
 
     if propuesta is None:
-        motivo = (
-            "Fallback: el supervisor no ha devuelto "
-            "una propuesta."
-        )
+        motivo = "Ruta decidida por Python sin propuesta del modelo."
     elif solicitada is None:
-        motivo = (
-            "Fallback: ruta ausente o no permitida."
-        )
+        motivo = "Fallback: ruta ausente o no permitida."
     elif corregida:
-        motivo = (
-            "Ruta corregida por trabajo pendiente, "
-            "orden o límites."
-        )
+        motivo = "Ruta corregida por trabajo pendiente, orden o límites."
     else:
         motivo = None
 
