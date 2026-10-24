@@ -20,8 +20,8 @@ from src.rag_intents import (
     _es_fuera_de_dominio_estructurado,
     _extraer_dia,
     _extraer_ubicacion_movil,
-    _normalizar,
 )
+from src.text_utils import normalizar_texto as _normalizar
 from src.retrieve import (
     buscar_chunks_relevantes,
     consultar_catalogo_residuos,

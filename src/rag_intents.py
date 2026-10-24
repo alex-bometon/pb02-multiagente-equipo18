@@ -6,7 +6,6 @@ No accede a Gemini, a ChromaDB ni al estado de los agentes.
 import re
 
 from src.domain import _es_otra_ciudad, evaluar_ambito
-from src.text_utils import normalizar_texto as _normalizar
 
 
 PATRON_MOVIL = re.compile(r"\bpuntos?\s+limpios?\s+movil(?:es)?\b")

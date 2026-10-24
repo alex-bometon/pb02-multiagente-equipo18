@@ -18,10 +18,9 @@ from config import (
     MAX_CONTEXTO_CARACTERES,
     TOP_K,
 )
-from src.domain import CIUDADES_FUERA_DE_MADRID, _es_otra_ciudad
+from src.domain import _es_otra_ciudad
 from src.gemini_client import crear_cliente_gemini
 from src.input_validation import validar_pregunta as _validar_pregunta
-from src.text_utils import normalizar_texto as _normalizar_texto
 from src.generation_validation import (
     MOTIVOS_ABSTENCION,
     _abstenerse,
@@ -29,11 +28,6 @@ from src.generation_validation import (
 )
 
 
-# Límites propios de este módulo. La auditoría podrá trasladar a
-# config.py aquellos que deban compartirse con otros componentes.
-
-# Reconocimiento conservador de algunas ciudades para las que no
-# existen datos locales en este RAG. No sustituye la revisión del LLM.
 ESQUEMA_RESPUESTA = {
     "type": "OBJECT",
     "properties": {
