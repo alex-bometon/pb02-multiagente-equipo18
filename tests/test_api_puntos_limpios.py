@@ -173,3 +173,27 @@ def test_parametros_invalidos(parametros):
 
     mock_http.assert_not_called()
     mock_local.assert_not_called()
+
+def test_error_procesamiento_no_activa_fallback():
+    """Un fallo interno no debe confundirse con un fallo HTTP."""
+
+    with (
+        patch(
+            "src.tools.api_puntos_limpios._consultar_api_puntos_limpios",
+            return_value=[{"attributes": {}, "geometry": {}}],
+        ),
+        patch(
+            "src.tools.api_puntos_limpios._preparar_puntos_cercanos",
+            side_effect=RuntimeError("Error interno simulado"),
+        ),
+        patch(
+            "src.tools.api_puntos_limpios.consultar_puntos_limpios_locales"
+        ) as mock_local,
+    ):
+        with pytest.raises(RuntimeError, match="Error interno simulado"):
+            buscar_puntos_limpios_cercanos.invoke({
+                "latitud": LATITUD,
+                "longitud": LONGITUD,
+            })
+
+    mock_local.assert_not_called()

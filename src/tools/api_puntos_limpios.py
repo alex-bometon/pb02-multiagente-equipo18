@@ -323,14 +323,6 @@ def buscar_puntos_limpios_cercanos(
             tipo=tipo,
         )
 
-        puntos = _preparar_puntos_cercanos(
-            registros,
-            latitud,
-            longitud,
-        )
-
-        fuente = "api"
-
     except RuntimeError:
         # Solo se activa ante fallos técnicos de la API.
         # Los errores de validación siguen propagándose.
@@ -375,6 +367,17 @@ def buscar_puntos_limpios_cercanos(
         )
 
         fuente = "corpus_local"
+
+    else:
+        # La API respondió correctamente.
+        # Los errores de procesamiento no activan el fallback.
+        puntos = _preparar_puntos_cercanos(
+            registros,
+            latitud,
+            longitud,
+        )
+
+        fuente = "api"
 
     # Comprobación final del radio, también para la API.
     cercanos = [

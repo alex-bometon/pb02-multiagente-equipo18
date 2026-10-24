@@ -117,23 +117,19 @@ Las credenciales se obtienen mediante variables de entorno; no se almacenan en `
 
 ## 5. Ejecución controlada
 
-Las herramientas están registradas mediante `@tool` de LangChain.
+Las herramientas se registran mediante `@tool` de LangChain.
 
-Un registro central establece:
+El archivo `src/tools/__init__.py` define:
 
-- Allowlist explícita de nombres autorizados.
-- Validación de argumentos antes de ejecutar.
-- Bloqueo de herramientas desconocidas.
-- Presupuesto máximo de operaciones impuesto por Python.
-- Separación entre iteraciones del LLM y ejecuciones reales de herramientas.
-- Captura de errores sin interrumpir innecesariamente la orquestación.
-- Trazabilidad de llamadas, resultados y bloqueos.
+- `TOOLS`: lista de herramientas disponibles.
+- `TOOL_BY_NAME`: registro y allowlist por nombre.
+- `ejecutar_tool(nombre, args)`: ejecución de herramientas autorizadas con validación de argumentos y gestión de errores.
 
-El presupuesto se mantiene por ejecución, sin contadores globales compartidos accidentalmente entre usuarios.
+Las herramientas desconocidas y los argumentos no permitidos se rechazan antes de ejecutar.
 
-Las trazas no deben contener credenciales, imágenes, ubicaciones precisas ni prompts completos por defecto.
+Los límites de iteraciones, el control de llamadas y las trazas corresponden al futuro grafo LangGraph, siguiendo el patrón de los Sprints 12 y 13.
 
-Importar las herramientas no realiza llamadas a Gemini ni a servicios externos.
+Las herramientas funcionan independientemente del grafo y no dependen de Streamlit.
 
 ## 6. Alcance
 
