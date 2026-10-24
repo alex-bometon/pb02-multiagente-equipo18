@@ -4,9 +4,9 @@ Proyecto académico individual de AI Engineering. El objetivo es construir un
 asistente sobre gestión de residuos domésticos de **Madrid ciudad**, con un RAG
 independiente que posteriormente utilizará un sistema multiagente LangGraph.
 
-> **Estado actual:** RAG implementado y evaluado; grafo multiagente, herramientas,
-> HITL, CLI multiagente y Streamlit todavía pendientes. Esta rama no es aún
-> una entrega completa de PB02.
+> **Estado actual:** RAG completo y herramientas implementadas y probadas.
+> Pendientes de integración: grafo multiagente LangGraph, HITL,
+> CLI multiagente y Streamlit.
 
 ## Requisitos
 
@@ -80,6 +80,35 @@ No hay dependencias de Streamlit dentro del RAG. El grafo LangGraph deberá
 consumir `responder()` mediante una herramienta con allowlist, sin replicar
 la lógica de recuperación o generación.
 
+## Herramientas del agente
+
+ReciclaTIA dispone de cuatro herramientas independientes, registradas mediante `@tool` de LangChain:
+
+| Herramienta | Función |
+|---|---|
+| `consultar_rag` | Consultar el RAG completo de residuos de Madrid |
+| `buscar_puntos_limpios_cercanos` | Consultar puntos limpios mediante la API municipal, con respaldo local en ChromaDB |
+| `hora_actual` | Obtener la fecha y hora de Madrid |
+| `describir_imagen` | Describir residuos visibles en imágenes JPEG o PNG ubicadas en `assets/` |
+
+`src/tools/__init__.py` contiene la allowlist `TOOLS`, el registro `TOOL_BY_NAME` y la función `ejecutar_tool()`.
+
+Las herramientas pueden ejecutarse independientemente de LangGraph. El grafo se encargará posteriormente de la selección, los límites de pasos y la trazabilidad.
+
+Para comprobar el registro:
+
+```bash
+python -m pytest tests/test_tools_registry.py -v
+```
+
+Para ejecutar una herramienta sencilla:
+
+```python
+from src.tools import ejecutar_tool
+
+print(ejecutar_tool("hora_actual"))
+```
+
 ## Pruebas
 
 ```bash
@@ -97,8 +126,7 @@ y consumir cuota; las estructuradas no necesitan generación.
 
 El proyecto todavía necesita supervisor, al menos dos especialistas,
 síntesis, aplicación supervisada por humano (HITL), `MemorySaver` y
-`thread_id`, límites de pasos en Python, herramientas RAG/API externa/
-auxiliar/multimodal en allowlist, trazas y un cliente CLI con aprobación o
+`thread_id`, límites de pasos en Python, trazas y un cliente CLI con aprobación o
 rechazo manual. La interfaz Streamlit se desarrollará después.
 
 También quedan pendientes el informe de decisiones, la presentación y la

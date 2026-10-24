@@ -11,7 +11,8 @@ from typing import Any
 
 from config import GENERATION_MODEL, TOP_K
 from src.input_validation import validar_pregunta as _validar_pregunta
-from src.generate import MENSAJE_ABSTENCION, generar_respuesta
+from src.generate import generar_respuesta
+from src.generation_validation import MENSAJE_ABSTENCION
 from src.rag_intents import (
     _es_consulta_catalogo,
     _es_consulta_horarios_moviles,
@@ -19,10 +20,9 @@ from src.rag_intents import (
     _es_fuera_de_dominio_estructurado,
     _extraer_dia,
     _extraer_ubicacion_movil,
-    _normalizar,
 )
+from src.text_utils import normalizar_texto as _normalizar
 from src.retrieve import (
-    MAX_PREGUNTA_CARACTERES,
     buscar_chunks_relevantes,
     consultar_catalogo_residuos,
     consultar_paradas_moviles,
@@ -38,19 +38,6 @@ def _validar_top_k(top_k: int) -> int:
             f"top_k debe estar entre 1 y {TOP_K} para este RAG."
         )
     return top_k
-
-
-def _validar_pregunta(pregunta: str) -> str:
-    """Valida la entrada también en las vías sin retrieval semántico."""
-    if not isinstance(pregunta, str) or not pregunta.strip():
-        raise ValueError("La pregunta debe ser un texto no vacío.")
-    limpia = pregunta.strip()
-    if len(limpia) > MAX_PREGUNTA_CARACTERES:
-        raise ValueError(
-            "La pregunta no puede superar "
-            f"{MAX_PREGUNTA_CARACTERES} caracteres."
-        )
-    return limpia
 
 
 def _resultado_abstencion(texto: str, motivo: str) -> dict:

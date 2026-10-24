@@ -6,6 +6,7 @@ import pytest
 
 from config import GENERATION_MODEL, TOP_K
 from src import rag
+from src.generation_validation import MENSAJE_ABSTENCION
 
 
 @pytest.mark.parametrize(
@@ -43,7 +44,7 @@ def test_reparacion_telefonos_rechaza_servicio_sin_acceso_externo(
     assert resultado["pregunta"] == pregunta.strip()
     assert resultado["abstencion"] is True
     assert resultado["motivo"] == "fuera_de_dominio"
-    assert resultado["respuesta"] == rag.MENSAJE_ABSTENCION
+    assert resultado["respuesta"] == MENSAJE_ABSTENCION
     assert resultado["fuentes"] == []
     assert resultado["chunks"] == []
     assert resultado["metricas"]["chunks_recuperados"] == 0

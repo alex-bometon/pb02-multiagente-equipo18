@@ -14,29 +14,20 @@ from config import (
     GENERATION_MAX_RETRIES,
     GENERATION_MODEL,
     GENERATION_RETRY_SECONDS,
+    GENERATION_TEMPERATURE,
     MAX_CONTEXTO_CARACTERES,
-    MAX_PREGUNTA_CARACTERES,
     TOP_K,
 )
-from src.domain import CIUDADES_FUERA_DE_MADRID, _es_otra_ciudad
+from src.domain import _es_otra_ciudad
 from src.gemini_client import crear_cliente_gemini
 from src.input_validation import validar_pregunta as _validar_pregunta
-from src.text_utils import normalizar_texto as _normalizar_texto
 from src.generation_validation import (
-    MENSAJE_ABSTENCION,
     MOTIVOS_ABSTENCION,
-    SalidaGeneracionInvalida,
     _abstenerse,
     _interpretar_respuesta,
-    _normalizar_citas_respuesta,
 )
 
 
-# Límites propios de este módulo. La auditoría podrá trasladar a
-# config.py aquellos que deban compartirse con otros componentes.
-
-# Reconocimiento conservador de algunas ciudades para las que no
-# existen datos locales en este RAG. No sustituye la revisión del LLM.
 ESQUEMA_RESPUESTA = {
     "type": "OBJECT",
     "properties": {
@@ -89,21 +80,6 @@ REGLAS OBLIGATORIAS:
 - No incluyas nombres de archivos, rutas o fuentes inventados.
 - En una respuesta afirmativa, usa abstencion=false y motivo='ninguno'.
 """
-
-
-def _validar_pregunta(pregunta: str) -> str:
-    """Valida la pregunta del usuario y normaliza espacios externos."""
-    if not isinstance(pregunta, str) or not pregunta.strip():
-        raise ValueError("La pregunta debe ser un texto no vacío.")
-
-    pregunta = pregunta.strip()
-    if len(pregunta) > MAX_PREGUNTA_CARACTERES:
-        raise ValueError(
-            "La pregunta no puede superar "
-            f"{MAX_PREGUNTA_CARACTERES} caracteres."
-        )
-
-    return pregunta
 
 
 def _preparar_contexto(chunks: list[dict]) -> tuple[str, dict]:
@@ -181,7 +157,7 @@ def _solicitar_generacion(cliente: Any, pregunta: str, contexto: str):
         system_instruction=INSTRUCCIONES_SISTEMA,
         response_mime_type="application/json",
         response_schema=ESQUEMA_RESPUESTA,
-        temperature=0,
+        temperature=GENERATION_TEMPERATURE,
     )
 
     max_intentos = max(1, GENERATION_MAX_RETRIES)

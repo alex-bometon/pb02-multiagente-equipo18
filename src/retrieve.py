@@ -17,7 +17,6 @@ from config import (
     CHROMA_DIR,
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
-    MAX_PREGUNTA_CARACTERES,
     MAX_TOP_K_RETRIEVAL as MAX_TOP_K,
     TOP_K,
 )
@@ -44,20 +43,6 @@ MODALIDADES = {
 # ---------------------------------------------------------
 # VALIDACIÓN DE ENTRADAS Y EMBEDDINGS
 # ---------------------------------------------------------
-
-
-def _validar_pregunta(pregunta: str) -> str:
-    """Comprueba que la pregunta es válida y elimina espacios externos."""
-    if not isinstance(pregunta, str) or not pregunta.strip():
-        raise ValueError("La pregunta debe ser un texto no vacío.")
-
-    pregunta = pregunta.strip()
-    if len(pregunta) > MAX_PREGUNTA_CARACTERES:
-        raise ValueError(
-            "La pregunta no puede superar "
-            f"{MAX_PREGUNTA_CARACTERES} caracteres."
-        )
-    return pregunta
 
 
 def _validar_embedding(vector: list[float]) -> list[float]:
