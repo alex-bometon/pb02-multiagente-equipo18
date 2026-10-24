@@ -137,3 +137,78 @@ GEO_MAX_RESULTS = 10
 # =========================================================
 
 TIMEZONE = "Europe/Madrid"
+
+
+
+# =========================================================
+# LANGGRAPH — MODELOS Y GENERACIÓN DE AGENTES
+# =========================================================
+
+# Reutilizamos el modelo Gemini configurado para el RAG.
+AGENT_MODEL = GENERATION_MODEL
+
+# Temperatura de los agentes y del supervisor.
+AGENT_TEMPERATURE = 0
+SUPERVISOR_TEMPERATURE = 0
+
+
+# =========================================================
+# LANGGRAPH — LÍMITES DE ORQUESTACIÓN
+# =========================================================
+
+# Máximo de decisiones del supervisor por consulta.
+MAX_ITER = 8
+
+# Máximo de rondas LLM por especialista.
+MAX_STEPS_DEFAULT = 4
+MAX_STEPS_LIMIT = 8
+
+# Presupuestos de llamadas reales a herramientas.
+# Una ronda LLM puede solicitar varias herramientas.
+MAX_TOOL_CALLS_PER_SPECIALIST = 8
+MAX_TOOL_CALLS_PER_TURN = 12
+
+# Límite de pasos internos del grafo.
+GRAPH_RECURSION_LIMIT = 2 * MAX_ITER + 8
+
+
+# =========================================================
+# CONVERSACIÓN — CLI Y STREAMLIT
+# =========================================================
+
+# Límites de consultas por conversación.
+MAX_TURNS_DEFAULT = 6
+MAX_TURNS_LIMIT = 12
+
+# Contexto de turnos anteriores.
+MAX_HISTORY_TURNS = 6
+
+# Reutilizamos la validación de longitud del RAG.
+AGENT_MAX_MESSAGE_CHARS = MAX_PREGUNTA_CARACTERES
+
+
+# =========================================================
+# OBSERVABILIDAD Y TRAZABILIDAD
+# =========================================================
+
+# Longitud máxima de las previsualizaciones de herramientas.
+TRACE_PREVIEW_MAX_CHARS = 160
+
+
+# =========================================================
+# HERRAMIENTAS PERMITIDAS POR ESPECIALISTA
+# =========================================================
+
+# Restricciones adicionales a la allowlist global de src.tools.
+# La ejecución y validación corresponden al módulo de herramientas.
+AGENT_TOOLS_BY_ROLE = {
+    "residuos": (
+        "consultar_rag",
+        "describir_imagen",
+    ),
+    "puntos": (
+        "consultar_rag",
+        "buscar_puntos_limpios_cercanos",
+        "hora_actual",
+    ),
+}
