@@ -1,6 +1,10 @@
 
 """Allowlist de herramientas de ReciclaTIA."""
 
+from typing import Any, Literal, TypedDict
+
+from config import AGENT_TOOLS_BY_ROLE
+
 from .api_puntos_limpios import buscar_puntos_limpios_cercanos
 from .describir_imagen import describir_imagen as _describir_imagen
 from .hora_actual import hora_actual as _hora_actual
