@@ -10,10 +10,14 @@ from langchain_core.tools import tool
 from src.retrieve import _abrir_coleccion
 from src.retrieve_structured import consultar_puntos_limpios_locales
 
-
-API_PUNTOS_LIMPIOS_URL = (
-    "https://sigma.madrid.es/hosted/rest/services/"
-    "RESIDUOS/PUNTOS_LIMPIOS/MapServer/5/query"
+from config import (
+    API_PUNTOS_LIMPIOS_URL,
+    API_TIMEOUT_SECONDS,
+    API_RESULT_RECORD_COUNT,
+    GEO_DEFAULT_RADIUS_METERS,
+    GEO_MIN_RADIUS_METERS,
+    GEO_MAX_RADIUS_METERS,
+    GEO_MAX_RESULTS,
 )
 
 TIPOS_PUNTOS_LIMPIOS = {
@@ -27,7 +31,7 @@ TIPOS_PUNTOS_LIMPIOS = {
 def _consultar_api_puntos_limpios(
     latitud: float,
     longitud: float,
-    radio_metros: int = 2000,
+    radio_metros: int = GEO_DEFAULT_RADIUS_METERS,
     tipo: str = "todos",
 ) -> list[dict]:
     """
@@ -58,9 +62,12 @@ def _consultar_api_puntos_limpios(
     if (
         isinstance(radio_metros, bool)
         or not isinstance(radio_metros, int)
-        or not 1 <= radio_metros <= 5000
+        or not GEO_MIN_RADIUS_METERS <= radio_metros <= GEO_MAX_RADIUS_METERS
     ):
-        raise ValueError("El radio debe estar entre 1 y 5000 metros.")
+        raise ValueError(
+            f"El radio debe estar entre {GEO_MIN_RADIUS_METERS} "
+            f"y {GEO_MAX_RADIUS_METERS} metros."
+        )
 
     # Validación del tipo.
     if not isinstance(tipo, str):
@@ -92,14 +99,14 @@ def _consultar_api_puntos_limpios(
         "outFields": "*",
         "returnGeometry": "true",
         "outSR": 4326,
-        "resultRecordCount": 2000,
+        "resultRecordCount": API_RESULT_RECORD_COUNT,
     }
 
     try:
         respuesta = requests.get(
             API_PUNTOS_LIMPIOS_URL,
             params=parametros,
-            timeout=12,
+            timeout=API_TIMEOUT_SECONDS,
         )
         respuesta.raise_for_status()
         datos = respuesta.json()
@@ -292,7 +299,7 @@ def _preparar_puntos_cercanos(
 def buscar_puntos_limpios_cercanos(
     latitud: float,
     longitud: float,
-    radio_metros: int = 2000,
+    radio_metros: int = GEO_DEFAULT_RADIUS_METERS,
     tipo: str = "todos",
 ) -> dict:
     """
@@ -301,8 +308,8 @@ def buscar_puntos_limpios_cercanos(
     Consulta primero la API geográfica municipal.
     Si falla, utiliza los registros locales de ChromaDB.
 
-    Devuelve hasta 10 resultados ordenados por distancia
-    geográfica e identifica la fuente utilizada.
+    Devuelve los resultados más cercanos hasta el límite
+    configurado e identifica la fuente utilizada.
     """
 
     tipo_normalizado = tipo.strip().lower() if isinstance(tipo, str) else tipo
@@ -380,7 +387,7 @@ def buscar_puntos_limpios_cercanos(
         "tipo_solicitado": tipo_normalizado,
         "radio_metros": radio_metros,
         "total_encontrados": len(cercanos),
-        "puntos": cercanos[:10],
+        "puntos": cercanos[:GEO_MAX_RESULTS],
         "aviso": (
             "Datos del corpus local indexado; "
             "pueden estar desactualizados."
