@@ -1,16 +1,34 @@
-# ReciclaTIA — PB02 Multiagente con LangGraph
+# ReciclaTIA
 
-ReciclaTIA es un asistente académico para consultas sobre **residuos domésticos y puntos limpios de Madrid ciudad**. Integra un RAG completo basado en ChromaDB, un grafo multiagente LangGraph con supervisión humana (HITL), herramientas externas y una interfaz CLI y Streamlit.
+**¿No sabes dónde tirar algo?** Esa es la pregunta de la que parte ReciclaTIA. He desarrollado este asistente para consultar cómo gestionar residuos domésticos en **Madrid ciudad**, encontrar puntos limpios y entender la información que ofrece el Ayuntamiento sin tener que buscarla manualmente en varios documentos.
 
-**Alcance:** información documentada de Madrid ciudad. No geocodifica direcciones, no determina rutas reales, no puede garantizar la apertura actual de una instalación y no ejecuta acciones físicas. `Aprobar` acepta el plan y finaliza el hilo; no desencadena un segundo ciclo de herramientas.
+Puedes escribir una pregunta, adjuntar una foto de un objeto o buscar puntos limpios a partir de unas coordenadas. ReciclaTIA consulta sus fuentes, prepara una respuesta y te permite **aprobar o rechazar el plan** antes de cerrar la conversación.
 
-## Requisitos
+Es un proyecto académico de *AI Engineering*. No sustituye la información municipal ni garantiza que un centro esté abierto en el momento de la consulta.
 
-- Python 3.11 o 3.12 recomendado (el entorno del equipo debe verificarse).
-- Dependencias declaradas en `requirements.txt`.
-- Clave de Gemini en `.env`, no versionado.
-- Corpus municipal CSV y HTML en `data/raw/` e índice ChromaDB local construido.
-- Conexión a Internet para Gemini y, cuando sea posible, la API municipal.
+## Qué puedes hacer
+
+- Preguntar dónde depositar un residuo: «¿Dónde tiro una botella de plástico?».
+- Consultar qué es un punto limpio fijo, móvil o de proximidad.
+- Buscar puntos limpios cercanos, **si decides facilitar unas coordenadas**.
+- Adjuntar una imagen JPG o PNG para que se describa el objeto; su destino se contrasta después con la documentación.
+- Revisar las fuentes, los resultados geográficos y el plan propuesto.
+- Rechazar el plan, aclarar tu petición y volver a consultar en el mismo hilo.
+
+La aplicación no utiliza tu ubicación GPS automáticamente. Las distancias son **en línea recta**, no rutas a pie o en coche. Cuando se indican horarios, proceden de información documentada: estar «dentro del horario publicado» **no confirma que una instalación esté abierta de verdad**.
+
+## Ponerlo en marcha
+
+Necesitas **Python 3.11 o 3.12**, conexión a Internet y una clave de Gemini de [Google AI Studio](https://aistudio.google.com/apikey). Gemini es un servicio externo que puede aplicar límites de uso.
+
+Clona este repositorio y utilízalo desde la rama `main`:
+
+```bash
+git clone https://github.com/alex-bometon/pb02-multiagente-equipo18.git
+cd pb02-multiagente-equipo18
+```
+
+Prepara el entorno desde la carpeta principal del proyecto:
 
 ```bash
 python -m venv .venv
@@ -19,147 +37,118 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edita `.env` y configura `GEMINI_API_KEY`. Nunca añadas `.env` al repositorio ni grabes la clave en la presentación. Gemini es un servicio externo con cuotas y posibles costes.
+En Windows (PowerShell), la activación es `.venv\Scripts\Activate.ps1` y la copia puede hacerse con `Copy-Item .env.example .env`.
 
-## Preparar el RAG (pipeline offline)
+Abre `.env` y sustituye el valor de `GEMINI_API_KEY` por tu clave. **No compartas ni subas este archivo al repositorio**. El proyecto utiliza un corpus de documentos municipales incluido en `data/raw/`.
 
-Desde la raíz del proyecto:
+### Preparar la base de conocimiento
 
-```bash
-python -m src.ingest
-python -m src.embed
-python -m src.index
-```
-
-El índice ChromaDB se almacena en `output/chroma_db/`. No vuelvas a generar embeddings por rutina; el pipeline offline puede consumir cuota y requiere consistencia entre corpus, modelo y dimensión de embeddings.
-
-## Ejecutar la CLI
+Las consultas usan una base vectorial de **ChromaDB**. Si todavía no existe `output/chroma_db/` y ya tienes `output/embeddings.json`, reconstruye el índice sin volver a pedir embeddings:
 
 ```bash
-python main.py --help
-python main.py rag query "¿Dónde tiro una botella de plástico?"
-python main.py rag ask "¿Dónde tiro una botella de plástico?"
-python main.py agente demo "¿Dónde van las pilas?"
-python main.py agente interactivo --max-turns 6 --max-steps 4
+python main.py rag index --yes
 ```
 
-En `demo`, el HITL solicita `aprobar`, `rechazar` o `salir`. En `interactivo`, la misma conversación admite rechazo y nuevo mensaje; `aprobar` cierra el hilo y `/nuevo` crea un identificador distinto. Escribe `/ayuda` para consultar todos los comandos.
-
-Para una búsqueda geográfica con coordenadas voluntarias:
+Si no tienes los archivos generados, puedes preparar el corpus e indexarlo desde cero:
 
 ```bash
-python main.py agente demo \
-  "Busca puntos limpios de proximidad cerca de mí" \
-  --latitud 40.4168 --longitud -3.7038
+python main.py rag index --full --yes
 ```
 
-Para multimodalidad, siempre con archivos permitidos dentro de `assets/`:
+La opción `--full` vuelve a generar embeddings con Gemini, puede tardar y consumir cuota. No hace falta repetirla para cada ejecución.
 
-```bash
-python main.py agente demo \
-  "Identifica el objeto y dime dónde se recicla" \
-  --imagen assets/capsula.jpg
-```
-
-## Ejecutar Streamlit
-
-Una vez copiado `app.py` a la raíz:
+### Abrir la aplicación
 
 ```bash
 python -m streamlit run app.py
 ```
 
-Usa el chat para consultar residuos y servicios; habilita **Aportar coordenadas** solo cuando quieras realizar una búsqueda geográfica. Puedes adjuntar PNG o JPEG (máximo 5 MiB y 16 megapíxeles); se almacena temporalmente dentro de `assets/` para la herramienta y se borra al finalizar el turno.
+Streamlit mostrará en la terminal la dirección local de la web, normalmente `http://localhost:8501`. Una vez abierta, basta con escribir la pregunta en el chat.
 
-**Ajustes de la barra lateral:** máximo de turnos al inicio de cada conversación, límite `max_steps` para el siguiente turno, ubicación voluntaria, mapa y depuración. No son controles para cambiar la clave Gemini, el modelo, el `TOP_K` del RAG ni límites globales no expuestos por el contrato del agente.
+## Cómo se utiliza
 
-**HITL:** la aplicación ofrece **Aprobar/Rechazar** en barra lateral y en el área central. Mientras existe un plan pendiente, no acepta nuevas consultas. Tras aprobar, `done=True` y el hilo se cierra. Tras rechazar, `done=False` y puedes reformular dentro del mismo `thread_id`.
+La barra lateral permite iniciar otra conversación, establecer los límites de turnos, adjuntar una imagen y activar voluntariamente la entrada de coordenadas. También puedes mostrar los mapas o el diagnóstico técnico del agente.
 
-En el panel de depuración se observan `thread_id`, flags, supervisor, especialistas, herramientas y trazas. `MemorySaver` **no es persistencia en disco**; el estado del hilo se conserva solo durante la vida del proceso de servidor.
+Cuando aparece un plan, tienes dos opciones:
 
-## Arquitectura
+- **Aprobar:** aceptas la propuesta y esa conversación se cierra.
+- **Rechazar:** el plan deja de estar vigente y puedes decir qué quieres cambiar sin empezar desde cero.
 
-```text
-CLI (main.py + src/cli_agent.py)       Streamlit (app.py)
-                   \                    /
-                    \                  /
-                      src/agent.py
-                            |
-                    src/graph.py
-                            |
-             supervisor (src/nodes.py)
-                       /         \
-                 residuos        puntos
-                       \         /
-                        sintetizar
-                            |
-                  HITL (interrupt_before)
-                            |
-                          aplicar
-                            |
-                          done
-```
+**Aprobar no realiza ninguna acción fuera de la aplicación:** no reserva, no recoge residuos, no envía solicitudes al Ayuntamiento y no modifica datos de servicios externos.
 
-- `src/state.py`: contratos públicos de estado, presupuesto y turnos.
-- `src/agent_routing.py`: selección determinista y fallback del supervisor.
-- `src/agent_tool_loop.py`: selección y ejecución supervisada de herramientas.
-- `src/agent_prompts.py`: prompts separados por rol.
-- `src/nodes.py`: supervisor, especialistas, síntesis y aplicación.
-- `src/graph.py`: `StateGraph`, `MemorySaver` y punto HITL.
-- `src/agent.py`: interfaz compartida por CLI y Streamlit (`procesar_turno`, `aprobar_plan`, `nuevo_thread_id`, `run_demo`).
+He preparado un [manual de uso](docs/manual_uso.md) con capturas que conviene hacer, ejemplos de consultas, explicación de cada control, errores habituales y uso desde terminal.
 
-## RAG completo como herramienta
-
-El corpus se carga, limpia, fragmenta e indexa con Gemini embeddings y ChromaDB:
-
-```text
-src/load.py + clean.py → chunk.py / ingest.py
-  → embed.py → index.py → retrieve.py
-  → generate.py + generation_validation.py → rag.py
-```
-
-`src.rag.responder(pregunta) -> dict` sigue siendo utilizable sin interfaz, con `respuesta`, `abstencion`, `motivo`, `fuentes`, `chunks` y métricas. La herramienta `consultar_rag` lo expone al sistema LangGraph. La salida de Gemini se valida: no se aceptan citas fuera del contexto ni respuestas afirmativas sin soporte.
-
-## Herramientas y permisos
-
-| Herramienta | Rol autorizado | Función |
-|---|---|---|
-| `consultar_rag` | residuos y puntos | Información fundamentada en documentos |
-| `describir_imagen` | residuos | Descripción visual con Gemini; no asigna contenedor por sí sola |
-| `buscar_puntos_limpios_cercanos` | puntos | API municipal ArcGIS + fallback local; distancia Haversine |
-| `hora_actual` | puntos | Hora de Madrid usando `Europe/Madrid` |
-
-La allowlist está en `src/tools/__init__.py`. Python impone `MAX_ITER`, `max_steps`, `max_turns`, los presupuestos de herramientas y los permisos del rol. El modelo no decide la aprobación humana ni `done`.
-
-Los resultados geográficos indican `fuente=api` o `fuente=corpus_local`. Una respuesta de respaldo no equivale a comprobación en tiempo real. La distancia es **geográfica en línea recta**, no caminando ni conduciendo; una hora actual no prueba por sí sola que el punto esté abierto.
-
-## Pruebas
+## También funciona desde terminal
 
 ```bash
-python -m py_compile app.py
-python -m pytest tests/ -q --tb=short
-python tests/evaluate_retrieve.py
-python tests/evaluate_rag.py --ids 9 10 14
+# Consultar documentos recuperados, sin generar una respuesta
+python main.py rag query "¿Dónde tiro una botella de plástico?"
+
+# Preguntar directamente al RAG
+python main.py rag ask "¿Dónde tiro una botella de plástico?"
+
+# Ejecutar una demostración del agente
+python main.py agente demo "¿Dónde van las pilas?"
+
+# Abrir una conversación interactiva
+python main.py agente interactivo
 ```
 
-Los tests aislados no realizan llamadas externas, salvo los scripts de evaluación/integración que lo indiquen; comprobar la cuota antes de lanzarlos. Para una demostración end-to-end real, consultar la matriz manual de pruebas en `GUIA_PRUEBAS_Y_ENTREGA.md` (si se incorpora al repositorio).
+En el modo interactivo, `/ayuda` muestra los comandos. Puedes escribir `aprobar`, `rechazar`, `/estado`, `/traza` o `/nuevo` cuando corresponda. En una demo la aprobación es manual, salvo que indiques `--auto-aprobar` expresamente.
 
-## Limitaciones conocidas y trabajo futuro
+## Cómo está construido
 
-- La generación JSON de Gemini puede incumplir el contrato de citas y provocar un fallo recuperable, sin inventar evidencia.
-- La síntesis presenta horarios únicamente cuando los recupera y considera pertinentes; no garantiza apertura actual.
-- `MemorySaver` no almacena conversaciones de forma permanente.
-- El HITL confirma/rechaza un plan, **no ejecuta nuevas herramientas después de aprobar**; un segundo ciclo ejecutable sería una mejora de producto y requeriría ampliar la especificación y las pruebas.
-- La clasificación documentada puede requerir aclaraciones ante materiales o subtipos ambiguos.
+La base del proyecto es un **RAG**: prepara documentos municipales, los divide en fragmentos, los representa mediante embeddings y recupera la información relevante desde ChromaDB. Sobre ese RAG he montado un **sistema multiagente en LangGraph**. El supervisor dirige la consulta al especialista de residuos, al de puntos limpios o a ambos cuando hace falta. Después se prepara una respuesta y el flujo se pausa para la revisión humana (*HITL*).
 
-## Fuentes, atribuciones y licencia
+```mermaid
+flowchart TD
+    U[Consulta desde Streamlit o CLI] --> O[Orquestador]
+    O --> S[Supervisor]
+    S --> R[Especialista de residuos]
+    S --> P[Especialista de puntos limpios]
+    R --> S
+    P --> S
+    S --> Y[Síntesis de respuesta y plan]
+    Y --> S
+    S --> H{{Revisión humana}}
+    H -->|Aprobar| A[Registrar aceptación y cerrar hilo]
+    H -->|Rechazar| X[Retirar plan y permitir una nueva consulta]
+```
 
-El corpus contiene documentos municipales CSV/HTML en `data/raw/`. **Antes de entregar, completar esta sección con las URLs concretas, fecha de consulta/descarga y condiciones de reutilización efectivas de cada archivo**, sin inventar estos datos. La herramienta geográfica consulta:
+El agente puede utilizar cuatro herramientas: el **RAG documental**, una **API municipal de puntos limpios** (con respaldo local si falla), la **hora de Madrid** y **Gemini para describir imágenes**. Las llamadas están restringidas mediante una lista de herramientas permitidas y límites aplicados desde Python.
 
-`https://sigma.madrid.es/hosted/rest/services/RESIDUOS/PUNTOS_LIMPIOS/MapServer/5/query`
+Los datos de conversación se guardan mediante `MemorySaver` mientras se ejecuta el proceso. **No es una base de datos de usuarios ni un historial permanente**: al reiniciar el servidor se pierden esos checkpoints.
 
-**Pendiente de confirmar:** aprobación docente del tema reciclaje (fuera de las cuatro temáticas orientativas del enunciado) y adaptación del requisito de PR por miembro a un proyecto individual. También está pendiente la licencia explícita del código.
+## Dónde está cada cosa
 
-## Informe y presentación
+| Ruta | Contenido |
+|---|---|
+| `app.py` | Aplicación web Streamlit |
+| `main.py` | Entrada a los modos de terminal |
+| `src/rag.py` | API del RAG (`responder`) |
+| `src/agent.py` | Procesamiento de turnos y aprobación humana |
+| `src/graph.py` y `src/nodes.py` | Grafo y nodos multiagente |
+| `src/agent_routing.py`, `src/agent_tool_loop.py` | Enrutamiento y ejecución controlada de herramientas |
+| `src/agent_schedule.py`, `src/agent_resultado.py` | Interpretación de horarios y composición de resultados |
+| `src/tools/` | Las cuatro herramientas del asistente |
+| `data/raw/` | Documentos del corpus |
+| `specs/` | Especificaciones técnicas y contratos |
+| `docs/manual_uso.md` | Instrucciones paso a paso |
+| `tests/` | Pruebas y evaluaciones |
 
-El entregable `entregables/informe_decisiones.md` documenta las decisiones de diseño, las cuatro herramientas, el HITL aprobado/rechazado, los aciertos, tres fallos y siguientes pasos MLOps. La presentación debe demostrar RAG, tools, grafo, HITL, CLI/Streamlit y, si la cuota lo permite, la herramienta multimodal. El enunciado admite un único vídeo de presentación por grupo.
+## Comprobar el proyecto
+
+```bash
+python -m pytest tests/ -q --tb=short
+python -m py_compile app.py
+```
+
+Los tests automatizados cubren componentes aislados. Para comprobar la experiencia completa hay que ejecutar también consultas reales, verificar la cuota de Gemini y probar tanto la aprobación como el rechazo. Las evaluaciones que llaman a servicios externos pueden consumir cuota.
+
+## Alcance y fuentes
+
+ReciclaTIA trabaja con datos sobre **Madrid ciudad**. No extrapola esas reglas a otros municipios, no crea rutas ni identifica materiales invisibles en una foto. Ante información insuficiente debe pedir una aclaración o reconocer sus límites, no inventar una respuesta.
+
+Las fuentes de partida son archivos CSV y HTML municipales incluidos en `data/raw/`; la búsqueda geográfica usa el servicio [ArcGIS de puntos limpios de Madrid](https://sigma.madrid.es/hosted/rest/services/RESIDUOS/PUNTOS_LIMPIOS/MapServer/5/query). La descripción técnica de los conjuntos de datos y las cuestiones de procedencia están en [specs/09-datos-y-fuentes.md](specs/09-datos-y-fuentes.md).
+
+El código se comparte con fines académicos. La inclusión de una licencia de software y la comprobación de las condiciones de reutilización de todas las fuentes son cuestiones que deben resolverse antes de redistribuirlo con otros fines.
