@@ -1,4 +1,3 @@
-
 """Instrucciones de los roles del sistema multiagente ReciclaTIA.
 
 Los prompts son contenido de dominio, no configuración operativa.

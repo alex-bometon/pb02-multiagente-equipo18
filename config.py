@@ -1,4 +1,3 @@
-
 """Configuración global de ReciclaTIA PB02.
 
 Centraliza los parámetros operativos del proyecto.

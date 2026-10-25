@@ -1,4 +1,3 @@
-
 """Contratos de estado compartidos por LangGraph, CLI y Streamlit.
 
 No ejecuta herramientas, no llama al LLM y no decide rutas ni HITL.

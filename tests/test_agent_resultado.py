@@ -143,3 +143,120 @@ def test_proximidad_24h_no_se_confunde_con_movil():
     respuesta, _ = respuesta_geografica_integrada(_estado([punto]))
     assert "Calle Alameda" in respuesta
     assert "Dentro del horario publicado" in respuesta
+
+
+def test_respuesta_util_elige_una_abierta_y_pocos_cercanos():
+    """La mejor abierta no eclipsa los móviles mucho más cercanos."""
+    puntos = [
+        _punto("Móvil", "Plaza Mayor", 288,
+               "Sábado de 10:30 a 12:00 h.", "SABADO"),
+        _punto("Móvil", "Calle Príncipe", 336,
+               "Martes de 15:45 a 17:15 h.", "MARTES"),
+        _punto("Móvil", "Tirso de Molina", 473,
+               "Sábado de 12:15 a 13:45 h.", "SABADO"),
+        _punto("Proximidad", "Alameda", 1011,
+               "Todos los días 24 horas."),
+        _punto("Proximidad", "Gran Vía", 1120,
+               "Todos los días 24 horas."),
+        _punto("Proximidad", "Plasencia", 1341,
+               "Todos los días 24 horas."),
+        _punto("Proximidad", "Santa Bárbara", 1364,
+               "Todos los días 24 horas."),
+    ]
+    respuesta, plan = respuesta_geografica_integrada(_estado(puntos))
+    assert "**Mejor opción para acudir ahora" in respuesta
+    assert respuesta.index("Alameda") < respuesta.index("Plaza Mayor")
+    assert "Calle Príncipe" in respuesta
+    assert "Tirso de Molina" in respuesta
+    assert "Plasencia" not in respuesta
+    assert "Santa Bárbara" not in respuesta
+    assert respuesta.count("Todos los días 24 horas") == 2
+    assert "Fuera del horario publicado" in respuesta
+    assert "Alameda" in plan[0]
+
+
+def test_con_muchas_opciones_usa_candidatos_extendidos():
+    """No deduce que todos estén cerrados de solo los diez primeros."""
+    cerrados = [
+        _punto("Móvil", f"Móvil {i}", i * 60,
+               "Sábado de 10:30 a 12:00 h.", "SABADO")
+        for i in range(1, 13)
+    ]
+    abierto = _punto("Proximidad", "Proximidad abierta", 1100,
+                     "Todos los días 24 horas.")
+    respuesta, _ = respuesta_geografica_integrada(
+        _estado([*cerrados, abierto])
+    )
+    assert "**Mejor opción para acudir ahora" in respuesta
+    assert "Proximidad abierta" in respuesta
+    assert "Móvil 1" in respuesta
+    assert "Móvil 2" in respuesta
+
+
+def test_marquesinas_documentadas_sin_fingir_geolocalizacion():
+    """Menciona esa modalidad solo cuando aparece en el RAG citado."""
+    datos = _estado([
+        _punto("Proximidad", "Alameda", 1011,
+               "Todos los días 24 horas."),
+    ])
+    rag = datos["evidencias"][0]["datos"]
+    rag["respuesta"] += " También en marquesinas de autobús [C4]."
+    respuesta, _ = respuesta_geografica_integrada(datos)
+    assert "Marquesinas de autobús" in respuesta
+    assert "marquesinas" in respuesta
+    assert "no devuelve sus ubicaciones" in respuesta
+
+
+def test_sin_marquesinas_en_rag_no_se_introducen_como_aceptadas():
+    datos = _estado([
+        _punto("Proximidad", "Alameda", 1011,
+               "Todos los días 24 horas."),
+    ])
+    respuesta, _ = respuesta_geografica_integrada(datos)
+    assert "**Marquesinas de autobús:**" not in respuesta
+
+
+def test_solo_horarios_desconocidos_no_inventa_disponibilidad():
+    datos = _estado([
+        _punto("Móvil", "Calle A", 100, "No consta horario"),
+        _punto("Móvil", "Calle B", 200, "Horario pendiente"),
+    ])
+    respuesta, plan = respuesta_geografica_integrada(datos)
+    assert "No se encontró una instalación" in respuesta
+    assert "Mejor opción para acudir ahora" not in respuesta
+    assert "Horario no comprobable" in respuesta
+    assert len(plan) == 2
+
+
+def test_mas_cercanos_explicitamente_respeta_distancia_y_explica_estado():
+    datos = _estado([
+        _punto("Móvil", "Plaza Mayor", 288,
+               "Sábado de 10:30 a 12:00 h.", "SABADO"),
+        _punto("Proximidad", "Alameda", 1011,
+               "Todos los días 24 horas."),
+    ], pide="Dame los más cercanos, aunque estén cerrados")
+    respuesta, _ = respuesta_geografica_integrada(datos)
+    assert respuesta.index("Plaza Mayor") < respuesta.index("Alameda")
+    assert "Fuera del horario publicado" in respuesta
+    assert "Dentro del horario publicado" in respuesta
+
+
+def test_sin_hora_ninguna_opcion_se_declara_disponible():
+    datos = _estado([
+        _punto("Proximidad", "Alameda", 1011,
+               "Todos los días 24 horas."),
+    ], hora=False)
+    respuesta, _ = respuesta_geografica_integrada(datos)
+    assert "No se pudo obtener la hora actual" in respuesta
+    assert "No se encontró una instalación" in respuesta
+    assert "Horario no comprobable" in respuesta
+
+
+def test_pilas_sin_marquesinas_en_rag_declara_limite_sin_inventar():
+    datos = _estado([
+        _punto("Proximidad", "Alameda", 1011,
+               "Todos los días 24 horas."),
+    ])
+    respuesta, _ = respuesta_geografica_integrada(datos)
+    assert "Límite geográfico" in respuesta
+    assert "no confirma esa modalidad" in respuesta

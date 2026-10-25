@@ -1,4 +1,3 @@
-
 """Consultas geográficas de puntos limpios de Madrid."""
 
 from math import asin, cos, isfinite, radians, sin, sqrt

@@ -1,4 +1,3 @@
-
 """Pruebas de la allowlist y ejecución de herramientas."""
 
 from unittest.mock import Mock

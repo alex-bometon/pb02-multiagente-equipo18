@@ -1,4 +1,3 @@
-
 """Allowlist de herramientas de ReciclaTIA."""
 
 from typing import Any, Literal, TypedDict
