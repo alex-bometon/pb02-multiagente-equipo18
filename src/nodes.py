@@ -22,6 +22,10 @@ from src.agent_routing import (
     requiere_llm_supervisor,
     resolver_enrutamiento,
 )
+from src.agent_schedule import (
+    anexos_temporales,
+    debe_buscar_puntos_automaticamente,
+)
 from src.agent_tool_loop import (
     _consulta_proximidad,
     ejecutar_especialista,
@@ -130,7 +134,22 @@ def residuos(estado: EstadoGrafo) -> dict[str, Any]:
     if not estado["necesita_residuos"] or estado["residuos_completado"]:
         raise RuntimeError("Especialista residuos no requerido o completado.")
 
-    return ejecutar_especialista(estado, rol="residuos")
+    resultado = ejecutar_especialista(estado, rol="residuos")
+    estado_parcial = {**estado, **resultado}
+    if (
+        not estado["necesita_puntos"]
+        and debe_buscar_puntos_automaticamente(estado_parcial)
+    ):
+        resultado["necesita_puntos"] = True
+        resultado["log"] = agregar_evento(
+            resultado["log"], nodo="residuos",
+            accion="puntos_requeridos",
+            detalle=(
+                "El RAG ha documentado un destino de punto limpio "
+                "y existen coordenadas voluntarias."
+            ),
+        )
+    return resultado
 
 
 def puntos(estado: EstadoGrafo) -> dict[str, Any]:
@@ -248,6 +267,8 @@ def _hay_fallo_bloqueante(estado: EstadoGrafo) -> bool:
     for traza in estado["traza_tools"]:
         if traza.get("status") != "error":
             continue
+        if traza.get("tool") == "hora_actual":
+            continue  # Fallo auxiliar: conservar evidencia RAG/API.
         if (
             traza.get("tool") == "buscar_puntos_limpios_cercanos"
             and estado["ubicacion"] is None
@@ -280,10 +301,14 @@ def _sintesis_directa(
     if evidencia != "suficiente" or _hay_fallo_bloqueante(estado):
         return None
 
-    if len(estado["evidencias"]) != 1:
+    principales = [
+        e for e in estado["evidencias"]
+        if isinstance(e, dict) and e.get("herramienta") != "hora_actual"
+    ]
+    if len(principales) != 1:
         return None
 
-    registro = estado["evidencias"][0]
+    registro = principales[0]
     if not isinstance(registro, dict):
         return None
 
@@ -511,8 +536,13 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
                     "No se pudo generar un plan válido para el HITL."
                 ) from exc
 
+    anexo, fuentes_horario = anexos_temporales(estado)
+    if anexo:
+        respuesta = respuesta.rstrip() + "\n\n" + anexo
+
     return {
         "respuesta": respuesta.strip(),
+        "fuentes": [*estado["fuentes"], *fuentes_horario],
         "plan": [paso.strip() for paso in plan],
         "abstencion": evidencia == "insuficiente",
         "motivo": motivo,

@@ -29,6 +29,11 @@ from config import (
     TRACE_PREVIEW_MAX_CHARS,
 )
 from src.agent_prompts import PROMPT_PUNTOS, PROMPT_RESIDUOS
+from src.agent_schedule import (
+    debe_buscar_puntos_automaticamente,
+    requiere_hora,
+    tipo_punto_documentado,
+)
 from src.llm import get_llm
 from src.state import EstadoGrafo, agregar_evento
 from src.text_utils import normalizar_texto
@@ -265,27 +270,22 @@ def _ruta_directa(
         return None
 
     if rol == "residuos":
-        if estado.get("necesita_puntos"):
-            return None
         return "consultar_rag", {"pregunta": pedido}
 
-    if estado.get("necesita_residuos"):
-        return None
-
-    if _consulta_temporal(pedido):
-        return None
-
-    if _consulta_proximidad(pedido):
+    if _consulta_proximidad(pedido) or (
+        estado.get("necesita_residuos")
+        and estado.get("ubicacion") is not None
+        and debe_buscar_puntos_automaticamente(estado)
+    ):
         if estado.get("ubicacion") is None:
             return "", {}
 
         tipo = _tipo_geografico(pedido)
         if tipo is None:
             return None
+        if tipo == "todos" and estado.get("necesita_residuos"):
+            tipo = tipo_punto_documentado(estado)
         return "buscar_puntos_limpios_cercanos", {"tipo": tipo}
-
-    if estado.get("ubicacion") is not None:
-        return None
 
     return "consultar_rag", {"pregunta": pedido}
 
@@ -670,6 +670,22 @@ def ejecutar_especialista(
             nodo=rol,
             accion="error",
             detalle=registro.error,
+        )
+
+    estado_con_evidencia = {
+        **estado,
+        "evidencias": registro.evidencias,
+    }
+    if (
+        requiere_hora(estado_con_evidencia, rol)
+        and not any(
+            e.get("herramienta") == "hora_actual"
+            for e in registro.evidencias
+            if isinstance(e, dict)
+        )
+    ):
+        registro.ejecutar(
+            "hora_actual", {}, paso=0, identificador="hora-auto"
         )
 
     return registro.finalizar()
