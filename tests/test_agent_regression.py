@@ -143,6 +143,9 @@ def _ejecutor_simulado(nombre, args, *, rol):
     elif nombre == "describir_imagen":
         assert args["ruta_imagen"] == "assets/imagen_demo.jpg"
         datos = "Una botella de plástico transparente."
+    elif nombre == "hora_actual":
+        assert args == {}
+        datos = "2026-10-26T10:00:00+01:00"
 
     else:
         raise AssertionError(f"Herramienta no prevista: {nombre}")
@@ -393,13 +396,13 @@ def test_punto_cercano_con_coordenadas(aislado):
     assert estado["estado_evidencia"] == "suficiente"
     assert "Calle de Prueba, 1" in estado["respuesta"]
 
-    herramienta.assert_called_once()
-
-    assert herramienta.call_args.args[0] == (
+    assert herramienta.call_count == 2
+    assert herramienta.call_args_list[0].args[0] == (
         "buscar_puntos_limpios_cercanos"
     )
-
-    argumentos = herramienta.call_args.args[1]
+    assert herramienta.call_args_list[1].args[0] == "hora_actual"
+    assert "hora_actual" in [e["herramienta"] for e in estado["evidencias"]]
+    argumentos = herramienta.call_args_list[0].args[1]
 
     assert argumentos["latitud"] == 40.4168
     assert argumentos["longitud"] == -3.7038
@@ -550,12 +553,13 @@ def test_consulta_compuesta_con_dos_especialistas(aislado):
     assert nombres_ejecutados == [
         "consultar_rag",
         "buscar_puntos_limpios_cercanos",
+        "hora_actual",
     ]
 
-    assert creador.call_count == 2
+    assert creador.call_count == 0  # Ruta determinista, sin LLM de selección.
     sintesis.assert_called_once()
-    assert len(estado["evidencias"]) == 2
-    assert estado["tool_calls_turno"] == 2
+    assert len(estado["evidencias"]) == 3
+    assert estado["tool_calls_turno"] == 3
     assert estado["fuentes"]
 
 
@@ -630,6 +634,7 @@ def test_imagen_y_rag_en_el_mismo_especialista(aislado):
     assert modelo.herramientas == [
         "consultar_rag",
         "describir_imagen",
+        "hora_actual",
     ]
 
 

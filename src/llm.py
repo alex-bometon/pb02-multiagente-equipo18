@@ -1,4 +1,3 @@
-
 """Inicialización del modelo Gemini para los agentes LangGraph.
 
 El RAG mantiene su cliente nativo independiente.

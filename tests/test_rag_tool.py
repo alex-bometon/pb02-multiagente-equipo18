@@ -1,4 +1,3 @@
-
 """Pruebas unitarias de la herramienta RAG de ReciclaTIA."""
 
 from unittest.mock import patch

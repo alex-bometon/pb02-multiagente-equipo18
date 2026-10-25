@@ -1,4 +1,3 @@
-
 """Prueba unitaria de la herramienta de fecha y hora."""
 
 from datetime import datetime

@@ -22,6 +22,11 @@ from src.agent_routing import (
     requiere_llm_supervisor,
     resolver_enrutamiento,
 )
+from src.agent_schedule import (
+    anexos_temporales,
+    debe_buscar_puntos_automaticamente,
+)
+from src.agent_resultado import respuesta_geografica_integrada
 from src.agent_tool_loop import (
     _consulta_proximidad,
     ejecutar_especialista,
@@ -130,7 +135,22 @@ def residuos(estado: EstadoGrafo) -> dict[str, Any]:
     if not estado["necesita_residuos"] or estado["residuos_completado"]:
         raise RuntimeError("Especialista residuos no requerido o completado.")
 
-    return ejecutar_especialista(estado, rol="residuos")
+    resultado = ejecutar_especialista(estado, rol="residuos")
+    estado_parcial = {**estado, **resultado}
+    if (
+        not estado["necesita_puntos"]
+        and debe_buscar_puntos_automaticamente(estado_parcial)
+    ):
+        resultado["necesita_puntos"] = True
+        resultado["log"] = agregar_evento(
+            resultado["log"], nodo="residuos",
+            accion="puntos_requeridos",
+            detalle=(
+                "El RAG ha documentado un destino de punto limpio "
+                "y existen coordenadas voluntarias."
+            ),
+        )
+    return resultado
 
 
 def puntos(estado: EstadoGrafo) -> dict[str, Any]:
@@ -248,6 +268,8 @@ def _hay_fallo_bloqueante(estado: EstadoGrafo) -> bool:
     for traza in estado["traza_tools"]:
         if traza.get("status") != "error":
             continue
+        if traza.get("tool") == "hora_actual":
+            continue  # Fallo auxiliar: conservar evidencia RAG/API.
         if (
             traza.get("tool") == "buscar_puntos_limpios_cercanos"
             and estado["ubicacion"] is None
@@ -280,10 +302,14 @@ def _sintesis_directa(
     if evidencia != "suficiente" or _hay_fallo_bloqueante(estado):
         return None
 
-    if len(estado["evidencias"]) != 1:
+    principales = [
+        e for e in estado["evidencias"]
+        if isinstance(e, dict) and e.get("herramienta") != "hora_actual"
+    ]
+    if len(principales) != 1:
         return None
 
-    registro = estado["evidencias"][0]
+    registro = principales[0]
     if not isinstance(registro, dict):
         return None
 
@@ -458,10 +484,18 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
         raise RuntimeError("Síntesis fuera de la ruta autorizada.")
 
     evidencia, motivo = _evidencia_suficiente(estado)
+    integrada = (
+        respuesta_geografica_integrada(estado)
+        if evidencia == "suficiente" and not _hay_fallo_bloqueante(estado)
+        else None
+    )
     limitaciones = deepcopy(estado["limitaciones"])
     modo = "directo"
 
-    if evidencia == "insuficiente":
+    if integrada is not None:
+        respuesta, plan = integrada
+        modo = "integrado"
+    elif evidencia == "insuficiente":
         if _hay_fallo_bloqueante(estado):
             raise RuntimeError(
                 "No se pudo obtener evidencia por un fallo técnico."
@@ -511,8 +545,41 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
                     "No se pudo generar un plan válido para el HITL."
                 ) from exc
 
+    if integrada is None:
+        anexo, fuentes_horario = anexos_temporales(estado)
+        tiene_geo = any(
+            isinstance(e, dict)
+            and e.get("herramienta") == "buscar_puntos_limpios_cercanos"
+            and isinstance(e.get("datos"), dict)
+            for e in estado["evidencias"]
+        )
+        if anexo and tiene_geo:
+            # Evitar una recomendación LLM contradictoria con la
+            # priorización temporal comprobada por Python.
+            clasificaciones = [
+                e["datos"]["respuesta"].strip()
+                for e in estado["evidencias"]
+                if isinstance(e, dict)
+                and e.get("rol") == "residuos"
+                and e.get("herramienta") == "consultar_rag"
+                and isinstance(e.get("datos"), dict)
+                and e["datos"].get("abstencion") is False
+                and isinstance(e["datos"].get("respuesta"), str)
+                and e["datos"].get("fuentes")
+            ]
+            if clasificaciones:
+                respuesta = "\n\n".join(clasificaciones)
+            elif not estado["necesita_residuos"]:
+                respuesta = ""
+        if anexo:
+            respuesta = (respuesta.rstrip() + "\n\n" + anexo).strip()
+
+    else:
+        fuentes_horario = []
+
     return {
         "respuesta": respuesta.strip(),
+        "fuentes": [*estado["fuentes"], *fuentes_horario],
         "plan": [paso.strip() for paso in plan],
         "abstencion": evidencia == "insuficiente",
         "motivo": motivo,

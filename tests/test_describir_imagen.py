@@ -1,4 +1,3 @@
-
 """Pruebas unitarias de la herramienta multimodal de ReciclaTIA."""
 
 from unittest.mock import Mock, patch

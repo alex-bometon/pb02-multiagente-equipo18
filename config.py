@@ -1,4 +1,3 @@
-
 """Configuración global de ReciclaTIA PB02.
 
 Centraliza los parámetros operativos del proyecto.
@@ -205,6 +204,7 @@ AGENT_TOOLS_BY_ROLE = {
     "residuos": (
         "consultar_rag",
         "describir_imagen",
+        "hora_actual",
     ),
     "puntos": (
         "consultar_rag",
