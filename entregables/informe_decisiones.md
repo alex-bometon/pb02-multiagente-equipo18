@@ -76,6 +76,16 @@ python main.py agente demo "¿Dónde van las pilas?"
 python -m streamlit run app.py
 ```
 
+![Consulta botella](img/botella_plastico.png)
+
+En cuanto a la consulta sobre **dónde van las pilas**:
+
+![Pilas](img/pilas.png)
+
+Y una vez aprobado...
+
+![Pilas plan aprobado](img/pilas_aprobado.png)
+
 También compruebo una consulta fuera de dominio, otra que necesita los dos especialistas, una imagen y una búsqueda geográfica con coordenadas. Las pruebas automatizadas del agente, las tools y los horarios están documentadas en `specs/08-pruebas-y-validacion.md`.
 
 No declaro resultados de tests ni ejemplos de Gemini como superados sin disponer de su salida. El corpus y el modelo tienen dependencias externas que pueden variar de una ejecución a otra.
