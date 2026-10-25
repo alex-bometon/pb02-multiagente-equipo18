@@ -31,7 +31,6 @@ class DecisionRuta(TypedDict):
     motivo_correccion: str | None
 
 
-
 # =========================================================
 # IDENTIFICACIÓN DE NECESIDADES
 # =========================================================
@@ -44,6 +43,18 @@ _PATRON_RESIDUOS = re.compile(
     r"recicl\w*|tir\w*|deposit\w*|desech\w*|separ\w*)\b"
     r"|\b(?:tipos?|categorias?|destinos?)\s+(?:de\s+)?"
     r"(?:los\s+)?residuos?\b"
+)
+
+# Preguntas como «¿Dónde van las pilas?» son solicitudes de destino.
+# Se evita confundirlas con preguntas sobre las propias instalaciones.
+_PATRON_DESTINO_IMPLICITO = re.compile(
+    r"\b(?:donde|adonde)\s+(?:va|van)\s+"
+    r"(?:el|la|los|las|un|una|mi|mis|tu|tus|"
+    r"este|esta|estos|estas|ese|esa|esos|esas)\s+"
+    r"(?!(?:puntos?\s+limpios?|centros?\s+de\s+recogida|"
+    r"paradas?\s+de\s+recogida|"
+    r"instalaciones?\s+de\s+recogida)\b)"
+    r"\w+"
 )
 
 _PATRON_PUNTOS = re.compile(
@@ -75,13 +86,15 @@ def _necesidades_texto(
     texto: str,
 ) -> tuple[bool, bool]:
     """Detecta necesidades explícitas en texto normalizado."""
-
     normalizado = normalizar_texto(texto)
 
-    return (
-        bool(_PATRON_RESIDUOS.search(normalizado)),
-        bool(_PATRON_PUNTOS.search(normalizado)),
+    residuos = bool(
+        _PATRON_RESIDUOS.search(normalizado)
+        or _PATRON_DESTINO_IMPLICITO.search(normalizado)
     )
+    puntos = bool(_PATRON_PUNTOS.search(normalizado))
+
+    return residuos, puntos
 
 
 def _senales_iniciales(
@@ -91,7 +104,6 @@ def _senales_iniciales(
 
     No llama al LLM ni realiza cambios en el estado.
     """
-
     pedido = estado.get("pedido", "")
 
     texto = normalizar_texto(
@@ -125,6 +137,7 @@ def _senales_iniciales(
 # DECISIÓN DE CONSULTAR AL LLM
 # =========================================================
 
+
 def requiere_llm_supervisor(
     estado: Mapping[str, Any],
 ) -> bool:
@@ -136,33 +149,24 @@ def requiere_llm_supervisor(
     En visitas posteriores, los especialistas pendientes
     y la finalización se determinan mediante Python.
     """
-
-    # Ya se fijaron las necesidades de este turno.
     if estado.get("siguiente"):
         return False
 
-    residuos, puntos, ambigua = _senales_iniciales(
-        estado
-    )
+    residuos, puntos, ambigua = _senales_iniciales(estado)
 
-    # Si no se reconoce ninguna especialidad,
-    # necesitamos interpretar la petición.
     if not (residuos or puntos):
         return True
 
-    # Si se pide una ubicación sin especificar
-    # qué instalación se busca, la intención
-    # requiere desambiguación.
     if ambigua:
         return True
 
-    # El enrutamiento ya está determinado.
     return False
 
 
 # =========================================================
 # FIJACIÓN DE ESPECIALISTAS POR TURNO
 # =========================================================
+
 
 def _necesidades_turno(
     estado: Mapping[str, Any],
@@ -173,47 +177,29 @@ def _necesidades_turno(
     Las necesidades explícitas tienen prioridad sobre
     cualquier propuesta del modelo.
     """
-
-    # Después de la primera decisión, las necesidades
-    # permanecen fijadas hasta finalizar el turno.
     if estado.get("siguiente"):
         return (
             estado.get("necesita_residuos") is True,
             estado.get("necesita_puntos") is True,
         )
 
-    residuos, puntos, ambigua = _senales_iniciales(
-        estado
-    )
+    residuos, puntos, ambigua = _senales_iniciales(estado)
 
-    # Solo admitimos clasificación LLM cuando la consulta
-    # necesita interpretación adicional.
     if (
         ambigua or not (residuos or puntos)
     ) and isinstance(propuesta, Mapping):
-
-        sugerencia_residuos = propuesta.get(
-            "necesita_residuos"
-        )
-
-        sugerencia_puntos = propuesta.get(
-            "necesita_puntos"
-        )
+        sugerencia_residuos = propuesta.get("necesita_residuos")
+        sugerencia_puntos = propuesta.get("necesita_puntos")
 
         if (
             type(sugerencia_residuos) is bool
             and type(sugerencia_puntos) is bool
         ):
-            # El modelo puede añadir una necesidad
-            # justificada por la ambigüedad, pero
-            # no desactivar una necesidad explícita.
             return (
                 residuos or sugerencia_residuos,
                 puntos or sugerencia_puntos,
             )
 
-    # Fallback determinista.
-    # No se inventa una especialidad desconocida.
     return residuos, puntos
 
 
@@ -221,9 +207,9 @@ def _necesidades_turno(
 # VALIDACIÓN DE LA SALIDA
 # =========================================================
 
+
 def _hay_salida_valida(estado: Mapping[str, Any]) -> bool:
     """Comprueba que ya existe respuesta y un plan sintetizado."""
-
     respuesta = estado.get("respuesta")
     plan = estado.get("plan")
 
@@ -244,35 +230,31 @@ def _hay_salida_valida(estado: Mapping[str, Any]) -> bool:
 # FALLBACK Y CONTROL DE PROGRESO
 # =========================================================
 
+
 def _ruta_obligatoria(
     estado: Mapping[str, Any],
     residuos: bool,
     puntos: bool,
 ) -> Ruta:
     """Impone orden, progreso, síntesis y límites desde Python."""
-
     iteracion = estado.get("iteracion", 0)
 
     if type(iteracion) is not int or iteracion < 0:
         raise ValueError("Contador de supervisor inválido.")
 
     salida = _hay_salida_valida(estado)
-
     pendiente_residuos = (
         residuos and not estado.get("residuos_completado")
     )
-
     pendiente_puntos = (
         puntos and not estado.get("puntos_completado")
     )
 
-    # iteracion cuenta las decisiones anteriores del supervisor.
     if iteracion >= MAX_ITER:
         raise RuntimeError(
             "Se ha superado MAX_ITER en el supervisor."
         )
 
-    # La última decisión permitida debe finalizar un plan válido.
     if iteracion == MAX_ITER - 1:
         if salida and not (
             pendiente_residuos or pendiente_puntos
@@ -283,15 +265,11 @@ def _ruta_obligatoria(
             "Última decisión del supervisor sin plan completo."
         )
 
-    # Solo podemos terminar tras sintetizar y atender
-    # todos los especialistas requeridos.
     if salida and not (
         pendiente_residuos or pendiente_puntos
     ):
         return "FINISH"
 
-    # Reservamos una decisión para sintetizar y otra para FINISH.
-    # Si todavía falta un especialista, no lo omitimos.
     if iteracion == MAX_ITER - 2:
         if pendiente_residuos or pendiente_puntos:
             raise RuntimeError(
@@ -306,14 +284,12 @@ def _ruta_obligatoria(
 
         return "sintetizar"
 
-    # Orden de trabajo para las consultas combinadas.
     if pendiente_residuos:
         return "residuos"
 
     if pendiente_puntos:
         return "puntos"
 
-    # Completados los especialistas, pasamos a síntesis.
     if not salida:
         if estado.get("siguiente") == "sintetizar":
             raise RuntimeError(
@@ -329,34 +305,22 @@ def _ruta_obligatoria(
 # VALIDACIÓN DE LA PROPUESTA DEL SUPERVISOR
 # =========================================================
 
+
 def resolver_enrutamiento(
     estado: Mapping[str, Any],
     propuesta: Mapping[str, Any] | None = None,
 ) -> DecisionRuta:
-    """Valida la sugerencia del supervisor y obtiene la ruta ejecutable.
+    """Valida la sugerencia y obtiene la ruta ejecutable.
 
-    No modifica el estado.
-
-    src.nodes.supervisor registrará la decisión, incrementará
-    iteracion y actualizará los indicadores del estado.
+    No modifica el estado. src.nodes.supervisor registrará
+    la decisión e incrementará el contador de iteraciones.
     """
-
-    residuos, puntos = _necesidades_turno(
-        estado,
-        propuesta,
-    )
-
-    ruta = _ruta_obligatoria(
-        estado,
-        residuos,
-        puntos,
-    )
+    residuos, puntos = _necesidades_turno(estado, propuesta)
+    ruta = _ruta_obligatoria(estado, residuos, puntos)
 
     solicitada = None
-
     if isinstance(propuesta, Mapping):
         valor = propuesta.get("siguiente")
-
         if isinstance(valor, str) and valor in _RUTAS:
             solicitada = valor
 
@@ -385,19 +349,13 @@ def fallback_siguiente(
     estado: Mapping[str, Any],
 ) -> Ruta:
     """Calcula la ruta si el LLM falla o no está disponible."""
-
     return resolver_enrutamiento(estado)["siguiente"]
 
-
-# =========================================================
-# RUTA CONDICIONAL DEL GRAFO
-# =========================================================
 
 def destino_condicional(
     estado: Mapping[str, Any],
 ) -> str:
     """Traduce FINISH al nodo aplicar de LangGraph."""
-
     ruta = estado.get("siguiente")
 
     if not isinstance(ruta, str) or ruta not in _RUTAS:
@@ -405,8 +363,4 @@ def destino_condicional(
             "Ruta del supervisor no permitida."
         )
 
-    return (
-        "aplicar"
-        if ruta == "FINISH"
-        else ruta
-    )
+    return "aplicar" if ruta == "FINISH" else ruta
