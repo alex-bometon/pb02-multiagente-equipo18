@@ -391,6 +391,9 @@ def buscar_puntos_limpios_cercanos(
         "radio_metros": radio_metros,
         "total_encontrados": len(cercanos),
         "puntos": cercanos[:GEO_MAX_RESULTS],
+        # Candidatos adicionales para priorizar horarios sin sacrificar
+        # el contrato original de 10 puntos más cercanos para la UI.
+        "puntos_candidatos": cercanos[:GEO_MAX_RESULTS * 6],
         "aviso": (
             "Datos del corpus local indexado; "
             "pueden estar desactualizados."

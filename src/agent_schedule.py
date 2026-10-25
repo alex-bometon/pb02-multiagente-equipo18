@@ -200,12 +200,65 @@ def _dias_permitidos(valor: Any) -> set[int] | None:
     return {_DIAS.index(dia) for dia in tokens}
 
 
-def _situacion_punto(punto: Mapping[str, Any], instante: datetime) -> str:
+def _franja_horaria(punto: Mapping[str, Any]) -> tuple[time, time] | None:
+    """Lee horas separadas o un campo municipal con intervalo completo.
+
+    Ejemplo real de ArcGIS: ABIERTO='Sábado de 10:30 a 12:00 h',
+    CERRADO=None. No interpreta intervalos con más de dos horas.
+    """
     apertura = _extraer_hora(punto.get("horario_apertura"))
     cierre = _extraer_hora(punto.get("horario_cierre"))
+    if apertura is not None and cierre is not None:
+        return apertura, cierre
+
+    for campo in ("horario_apertura", "horario_cierre"):
+        valor = punto.get(campo)
+        if not isinstance(valor, str):
+            continue
+        horas = re.findall(
+            r"(?<!\d)([01]?\d|2[0-3])[:.]([0-5]\d)(?!\d)", valor
+        )
+        if len(horas) == 2:
+            return (time(int(horas[0][0]), int(horas[0][1])),
+                    time(int(horas[1][0]), int(horas[1][1])))
+    return None
+
+
+def _dias_punto(punto: Mapping[str, Any]) -> set[int] | None:
+    """Prioriza el campo de días; usa texto horario si lleva día explícito."""
     dias = _dias_permitidos(punto.get("dia_semana"))
-    if apertura is None or cierre is None or dias is None:
-        return "No se puede determinar su horario vigente con estos datos"
+    if dias is not None:
+        return dias
+    for campo in ("horario_apertura", "horario_cierre"):
+        valor = punto.get(campo)
+        if not isinstance(valor, str):
+            continue
+        texto = normalizar_texto(valor)
+        encontrados = re.findall(r"\b(?:" + "|".join(_DIAS) + r")\b", texto)
+        if len(set(encontrados)) == 1:
+            return {_DIAS.index(encontrados[0])}
+    return None
+
+
+def _es_24_horas(punto: Mapping[str, Any]) -> bool:
+    """Solo acepta una modalidad 24 h explícita en el registro."""
+    tipo = normalizar_texto(str(punto.get("tipo") or ""))
+    if "24h" in tipo or re.search(r"\b24\s*h(?:oras)?\b", tipo):
+        return True
+    return False
+
+
+def estado_horario(punto: Mapping[str, Any], instante: datetime) -> str:
+    """Devuelve 'dentro', 'fuera' o 'desconocido' sin inventar apertura."""
+    if _es_24_horas(punto):
+        return "dentro"
+
+    franja = _franja_horaria(punto)
+    dias = _dias_punto(punto)
+    if franja is None or dias is None:
+        return "desconocido"
+
+    apertura, cierre = franja
     ahora = instante.timetz().replace(tzinfo=None)
     hoy = instante.weekday()
     if apertura < cierre:
@@ -216,10 +269,93 @@ def _situacion_punto(punto: Mapping[str, Any], instante: datetime) -> str:
             or ((hoy - 1) % 7 in dias and ahora < cierre)
         )
     else:
-        return "Horario de apertura y cierre ambiguo"
-    if coincide:
+        return "desconocido"
+    return "dentro" if coincide else "fuera"
+
+
+def _situacion_punto(punto: Mapping[str, Any], instante: datetime) -> str:
+    situacion = estado_horario(punto, instante)
+    if situacion == "dentro":
         return "Dentro del horario publicado (apertura real no verificada)"
-    return "Fuera del horario publicado; no consta disponible ahora"
+    if situacion == "fuera":
+        return "Fuera del horario publicado; no consta disponible ahora"
+    return "No se puede determinar el horario vigente con estos datos"
+
+
+def _tipos_admitidos(estado: Mapping[str, Any]) -> set[str] | None:
+    """Extrae modalidades afirmadas en el RAG; no infiere compatibilidad."""
+    textos = []
+    for datos in _evidencias(estado, "consultar_rag", "residuos"):
+        if (isinstance(datos, dict) and datos.get("abstencion") is False
+                and datos.get("fuentes")):
+            textos.append(normalizar_texto(str(datos.get("respuesta") or "")))
+    if not textos:
+        return None
+    contenido = " ".join(textos)
+    tipos: set[str] = set()
+    if re.search(r"\bpuntos?\s+limpios?\s+de\s+proximidad\b", contenido):
+        tipos.add("proximidad")
+    if re.search(r"\bpuntos?\s+limpios?\s+fijos?\b", contenido):
+        tipos.add("fijo")
+    if re.search(r"\bpuntos?\s+limpios?\s+movil(?:es)?\b", contenido):
+        tipos.add("movil")
+    if re.search(r"\bpuntos?\s+limpios?\s+moviles?\s+24\s*h", contenido):
+        tipos.add("movil 24h")
+    return tipos or None
+
+
+def _tipo_normalizado(punto: Mapping[str, Any]) -> str:
+    tipo = normalizar_texto(str(punto.get("tipo") or ""))
+    if "24h" in tipo or "24 h" in tipo:
+        return "movil 24h"
+    if "movil" in tipo:
+        return "movil"
+    if "proximidad" in tipo:
+        return "proximidad"
+    if "fijo" in tipo:
+        return "fijo"
+    return "otro"
+
+
+def priorizar_puntos(
+    puntos: list[dict[str, Any]],
+    instante: datetime,
+    *,
+    preferir_abiertos: bool,
+    tipos_admitidos: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Ordena candidatos sin hacer nuevas llamadas ni inventar aceptación.
+
+    Cuando hay evidencia de modalidades admitidas, descarta las no
+    mencionadas. Dentro de cada prioridad conserva la menor distancia.
+    """
+    candidatos = [p for p in puntos if isinstance(p, dict)]
+    if tipos_admitidos is not None:
+        candidatos = [p for p in candidatos if _tipo_normalizado(p) in tipos_admitidos]
+
+    pesos = {"dentro": 0, "desconocido": 1, "fuera": 2}
+
+    def clave(punto: Mapping[str, Any]) -> tuple[float, float]:
+        distancia = punto.get("distancia_metros")
+        metros = float(distancia) if isinstance(distancia, (int, float)) and not isinstance(distancia, bool) else float("inf")
+        disponibilidad = pesos[estado_horario(punto, instante)] if preferir_abiertos else 0
+        return disponibilidad, metros
+
+    return sorted(candidatos, key=clave)
+
+
+def _priorizar_abiertos(pedido: str) -> bool:
+    """Una solicitud explícita de ranking por distancia prima sobre horario."""
+    texto = normalizar_texto(pedido)
+    pide_mas_cercanos = bool(re.search(
+        r"\b(?:mas\s+cercan[oa]s?|ordenad\w*\s+por\s+distancia|"
+        r"solo\s+por\s+distancia)\b", texto
+    ))
+    pide_abierto = bool(re.search(
+        r"\b(?:abiert\w*|disponible\w*\s+ahora|puedo\s+ir\s+ahora|"
+        r"en\s+este\s+momento)\b", texto
+    ))
+    return pide_abierto or not pide_mas_cercanos
 
 
 def _horarios_documentales(
@@ -325,16 +461,49 @@ def anexos_temporales(
     for datos in _evidencias(estado, "buscar_puntos_limpios_cercanos", "puntos"):
         if not isinstance(datos, dict) or not isinstance(datos.get("puntos"), list):
             continue
-        puntos = datos["puntos"]
+        candidatos = datos.get("puntos_candidatos") or datos["puntos"]
+        if not isinstance(candidatos, list):
+            candidatos = datos["puntos"]
+        preferir = _priorizar_abiertos(str(estado.get("pedido") or ""))
+        # Solo se filtran modalidades si la clasificación ha sido respaldada
+        # por las fuentes. Consultas genéricas sobre puntos no se filtran.
+        admitidos = _tipos_admitidos(estado) if estado.get("necesita_residuos") else None
+        puntos = priorizar_puntos(
+            candidatos, instante,
+            preferir_abiertos=preferir,
+            tipos_admitidos=admitidos,
+        )
         if puntos:
+            etiqueta = (
+                "Opciones de modalidades documentadas para el residuo"
+                if admitidos is not None else
+                "Instalaciones encontradas (aceptación del residuo no confirmada)"
+            )
+            if preferir:
+                textos.append(
+                    etiqueta + ", priorizadas por horario publicado "
+                    "y luego por distancia en línea recta:"
+                )
+            else:
+                textos.append(
+                    etiqueta + ", ordenadas por distancia en línea recta "
+                    "(se indica su situación horaria):"
+                )
+            if preferir and not any(
+                estado_horario(p, instante) == "dentro" for p in puntos
+            ):
+                textos.append(
+                    "Ninguna de estas opciones tiene disponibilidad "
+                    "confirmable por el horario publicado en este momento."
+                )
+        else:
             textos.append(
-                "Estado orientativo de horarios de los puntos más cercanos "
-                "(distancias en línea recta):"
+                "No se encontró un punto con compatibilidad documentada "
+                "entre los candidatos consultados."
             )
         for punto in puntos[:5]:
-            if not isinstance(punto, dict):
-                continue
             direccion = str(punto.get("direccion") or "Sin dirección")
+            tipo = str(punto.get("tipo") or "Tipo desconocido")
             distancia = punto.get("distancia_metros")
             distancia_str = (
                 f"{distancia:.0f} m" if isinstance(distancia, (int, float))
@@ -346,16 +515,24 @@ def anexos_temporales(
                 if punto.get(campo)
             )
             texto = (
-                f"- {direccion} ({distancia_str}): "
+                f"- {tipo}, {direccion} ({distancia_str}): "
                 f"{_situacion_punto(punto, instante)}."
             )
             if franja:
-                texto += f" Datos del horario: {franja}."
+                texto += f" Horario documentado: {franja}."
             textos.append(texto)
+        fuente_geo = datos.get("fuente")
         if puntos:
             textos.append(
-                "Los horarios proceden de los registros disponibles; "
-                "festivos, incidencias y modificaciones pueden alterar la apertura."
+                "Fuente de ubicaciones: "
+                + ("API municipal." if fuente_geo == "api" else "corpus local.")
+                + " El horario publicado no garantiza apertura real; "
+                  "puede haber cambios, festivos o incidencias."
+            )
+        if len(candidatos) >= 60:
+            textos.append(
+                "La selección utiliza un conjunto limitado de candidatos; "
+                "pueden existir otras opciones dentro del radio de búsqueda."
             )
         break
 
