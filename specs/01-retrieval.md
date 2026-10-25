@@ -1,106 +1,101 @@
+# 01. Pipeline documental y recuperación semántica
 
-# 01 — Retrieval de ReciclaTIA
+## Arquitectura
 
-## 1. Objetivo
+El RAG funciona de manera independiente de LangGraph. El corpus se prepara fuera del flujo conversacional; durante una consulta solo se recuperan los fragmentos necesarios.
 
-Implementar desde cero la recuperación semántica
-de documentos del corpus de ReciclaTIA.
+```mermaid
+flowchart TD
+    A[CSV y HTML municipales] --> B[load / clean]
+    B --> C[chunk / ingest]
+    C --> D[chunks.json]
+    D --> E[Gemini embeddings]
+    E --> F[embeddings.json]
+    F --> G[ChromaDB persistente]
+    Q[Pregunta] --> V[Validación]
+    V --> EQ[Embedding de consulta]
+    EQ --> G
+    G --> K[Top-k + metadatos + distancia]
+    K --> R[Respuesta RAG]
+```
 
-El módulo debe ser independiente de la generación,
-de LangGraph y de Streamlit.
+## Configuración del repositorio
 
-## 2. Arquitectura
+| Parámetro en `config.py` | Valor |
+|---|---|
+| `CHUNK_SIZE` | 1000 caracteres |
+| `CHUNK_OVERLAP` | 100 caracteres |
+| `EMBEDDING_MODEL` | `gemini-embedding-2` |
+| `EMBEDDING_DIMENSIONS` | 768 |
+| `CHROMA_COLLECTION_NAME` | `residuos_madrid` |
+| `CHROMA_DISTANCE` | `cosine` |
+| `TOP_K` | 5 |
+| `MAX_TOP_K_RETRIEVAL` | 10 |
+| `MAX_PREGUNTA_CARACTERES` | 500 |
+| `MAX_CONTEXTO_CARACTERES` | 12000 |
 
-Pregunta del usuario
-    ↓
-Validación
-    ↓
-Embedding de la pregunta (Gemini)
-    ↓
-Consulta vectorial a ChromaDB
-    ↓
-Recuperación top-k
-    ↓
-Chunks + metadatos + distancias
+Las dimensiones, el modelo y la colección deben coincidir con el índice creado. Cambiar el modelo de consulta sin reconstruir los embeddings haría que la recuperación no fuese compatible.
 
-## 3. Configuración
+## Archivos y responsabilidad
 
-- Modelo: gemini-embedding-2
-- Dimensiones: 768
-- Colección: residuos_madrid
-- Distancia: coseno
-- TOP_K por defecto: 5
-- Longitud máxima propuesta: 500 caracteres
-- K máximo propuesto: 10
+| Archivo | Responsabilidad |
+|---|---|
+| `src/load.py` | Lectura del corpus |
+| `src/clean.py` | Limpieza y normalización de HTML/CSV |
+| `src/chunk.py` | Fragmentación |
+| `src/ingest.py` | Orquestación de preparación de chunks |
+| `src/embed.py` | Generación de vectores con Gemini |
+| `src/index.py` | Índice persistente ChromaDB |
+| `src/retrieve.py` | Búsqueda semántica top-k y filtros |
+| `src/retrieve_structured.py` | Lecturas estructuradas del catálogo y las paradas |
 
-Los límites serán aplicados por Python.
+## Contrato de búsqueda
 
-## 4. Módulo
-
-Archivo: src/retrieve.py
-
-Función pública principal:
-
+```python
 buscar_chunks_relevantes(
     pregunta: str,
     top_k: int = TOP_K,
     *,
     query_embedding: list[float] | None = None,
 ) -> list[dict]
+```
 
-El embedding precalculado es opcional y
-permite evaluar sin repetir llamadas a Gemini.
+El resultado de una búsqueda semántica mantiene esta forma:
 
-## 5. Contrato de salida
-
-Cada resultado contendrá:
-
+```python
 {
-    "text": str,
-    "distance": float,
-    "metadata": dict
+    "text": "...",
+    "distance": 0.0,
+    "metadata": {"source": "...", "path": "..."},
 }
+```
 
-Los resultados estarán ordenados desde
-la menor distancia hasta la mayor.
+La distancia es la métrica de ChromaDB y sirve para ordenar y analizar los resultados; **no es una probabilidad de veracidad**. `query_embedding` permite inyectar un vector de prueba sin pedirlo a Gemini.
 
-Se conservarán los metadatos originales,
-especialmente source y path.
+## Reglas de validación
 
-## 6. Validaciones
+- Pregunta no vacía y longitud dentro del límite.
+- `top_k` entero dentro de los máximos.
+- Dimensiones compatibles de cualquier embedding facilitado.
+- Colección disponible y respuesta de ChromaDB válida.
+- Metadatos originales conservados. Cuando una fuente no está documentada, no se fabrica.
+- Error técnico explícito si la consulta no puede ejecutarse; nunca se reemplaza por resultados inventados.
 
-- Rechazar preguntas vacías.
-- Rechazar preguntas demasiado largas.
-- Rechazar valores de K no válidos.
-- Comprobar la dimensión de los vectores.
-- Detectar colecciones inexistentes o vacías.
-- Gestionar explícitamente errores de Gemini.
-- No inventar resultados si falla ChromaDB.
+## Reconstrucción
 
-## 7. Alcance
+Desde la raíz:
 
-Incluye:
-- Embeddings de consultas.
-- Recuperación semántica top-k.
-- Metadatos y distancias.
-- Reutilización de embeddings precalculados.
-- Pruebas independientes.
+```bash
+python main.py rag index --yes
+python main.py rag index --full --yes
+```
 
-No incluye:
-- Reranking híbrido.
-- Generación de respuestas.
-- Prompts del LLM.
-- Integración con LangGraph.
-- Interfaz Streamlit.
+El primer comando reconstruye el índice usando embeddings disponibles. El segundo rehace ingesta y embeddings antes de indexar, con consumo potencial de Gemini. No deben ejecutarse como parte de cada consulta.
 
-## 8. Criterios de aceptación
+## Verificación
 
-1. Recuperar documentos de ChromaDB.
-2. Respetar TOP_K.
-3. Devolver texto, distancia y metadatos.
-4. Validar preguntas vacías y límites.
-5. Permitir pruebas sin llamadas a Gemini
-   mediante embeddings precalculados.
-6. Mostrar fuentes recuperadas.
-7. Probar preguntas dentro y fuera del corpus.
-8. No modificar el índice persistente.
+- Una pregunta dentro del corpus devuelve fragmentos y fuentes utilizables.
+- Un cambio de `top_k` altera como máximo el número solicitado, sin modificar el índice.
+- Un embedding precalculado evita la llamada al proveedor.
+- Las preguntas inválidas y colecciones ausentes no generan respuestas simuladas.
+- Las comparaciones de ranking y distancias se registran en `tests/evaluate_retrieve.py`, distinguiendo coincidencia de fuente de corrección factual.

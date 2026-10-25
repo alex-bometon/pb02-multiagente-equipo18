@@ -1,159 +1,112 @@
+# 05. Herramientas, contratos y permisos
 
-# 05 — Herramientas de ReciclaTIA PB02
+## Separación de responsabilidades
 
-## 1. Objetivo
+Las herramientas son capacidades independientes del grafo. LangGraph no realiza HTTP ni consulta ChromaDB por su cuenta: selecciona una herramienta registrada y la ejecuta mediante `src/tools/__init__.py`.
 
-Integrar cuatro herramientas independientes y reutilizables para que el sistema multiagente de ReciclaTIA pueda consultar información sobre gestión de residuos de Madrid ciudad.
+```mermaid
+flowchart TD
+    A[Especialista] --> L[Allowlist global y permisos del rol]
+    L -->|Autorizada| E[Ejecutor central]
+    L -->|Bloqueada| B[Resultado de error, sin ejecución]
+    E --> R[consultar_rag]
+    E --> P[buscar_puntos_limpios_cercanos]
+    E --> H[hora_actual]
+    E --> V[describir_imagen]
+    R --> S[Resultado estructurado]
+    P --> S
+    H --> S
+    V --> S
+    S --> T[Evidencias y traza del agente]
+```
 
-Las herramientas deben funcionar sin LangGraph ni Streamlit y conservar contratos de entrada y salida verificables.
+## Inventario
 
-## 2. Arquitectura
-
-El módulo `src/tools/` contiene:
-
-| Archivo | Herramienta | Función |
+| Nombre de tool | Función real | Especialista permitido |
 |---|---|---|
-| `rag_tool.py` | `consultar_rag` | Consultar el RAG |
-| `hora_actual.py` | `hora_actual` | Obtener fecha y hora |
-| `describir_imagen.py` | `describir_imagen` | Describir objetos mediante Gemini |
-| `api_puntos_limpios.py` | `buscar_puntos_limpios_cercanos` | Localizar puntos limpios |
+| `consultar_rag` | Llama a `src.rag.responder()` y devuelve su contrato completo | `residuos`, `puntos` |
+| `buscar_puntos_limpios_cercanos` | Consulta ArcGIS municipal, calcula proximidad y usa respaldo local en error técnico | `puntos` |
+| `hora_actual` | Obtiene fecha/hora de `Europe/Madrid` | `puntos` |
+| `describir_imagen` | Analiza una imagen JPEG/PNG con Gemini | `residuos` |
 
-El RAG mantiene su implementación independiente en `src/rag.py`.
+La lista global es `TOOLS`; `TOOL_BY_NAME` asocia cada nombre con su herramienta. Los permisos adicionales están centralizados en `config.AGENT_TOOLS_BY_ROLE`.
 
-La herramienta geográfica reutiliza `src/retrieve.py` y `src/retrieve_structured.py` para acceder al corpus de ChromaDB.
+## Contratos de las herramientas
 
-Un registro central proporciona la allowlist y la ejecución controlada de herramientas.
+### `consultar_rag(pregunta: str) -> dict`
 
-## 3. Contratos de las herramientas
+Conserva los campos de `responder()` (respuesta, fuentes, chunks, motivo, abstención y métricas). No interpreta su abstención como un fallo HTTP ni elimina citas al entregarlas al especialista. La recuperación y generación siguen dentro del RAG.
 
-### 3.1. Consulta RAG
+### `buscar_puntos_limpios_cercanos(latitud, longitud, radio_metros=2000, tipo="todos") -> dict`
 
-`consultar_rag(pregunta: str) -> dict`
-
-- Delega en `src.rag.responder(pregunta)`.
-- Conserva la respuesta estructurada, fuentes, citas y métricas.
-- Respeta las abstenciones cuando no hay evidencia suficiente.
-- No reproduce ni modifica la lógica de recuperación o generación.
-- Propaga los errores técnicos sin transformarlos en respuestas inventadas.
-
-### 3.2. Fecha y hora
-
-`hora_actual() -> str`
-
-- Devuelve fecha y hora ISO 8601 con zona horaria.
-- Utiliza `Europe/Madrid` como zona configurada.
-- No necesita HTTP ni Gemini.
-- No deduce que una instalación está abierta únicamente a partir de la hora actual.
-
-### 3.3. Descripción de imágenes
-
-`describir_imagen(ruta_imagen: str) -> str`
-
-- Utiliza Gemini para describir objetos y materiales visibles.
-- Acepta archivos JPEG y PNG ubicados dentro de `assets/`.
-- Valida ruta, extensión, formato real, tamaño y dimensiones.
-- Admite imágenes de hasta 5 MiB y 16 millones de píxeles.
-- Expresa incertidumbre cuando el material no puede identificarse.
-- No determina el contenedor sin consultar evidencia del RAG.
-- Reutiliza `src.gemini_client.crear_cliente_gemini()`.
-
-### 3.4. Búsqueda geográfica
-
-`buscar_puntos_limpios_cercanos(latitud, longitud, radio_metros=2000, tipo="todos") -> dict`
-
-Fuente principal:
+Consulta el servicio ArcGIS:
 
 `https://sigma.madrid.es/hosted/rest/services/RESIDUOS/PUNTOS_LIMPIOS/MapServer/5/query`
 
-- Recibe coordenadas WGS84 (EPSG:4326).
-- Admite `todos`, `fijo`, `movil` y `proximidad`.
-- Utiliza un radio predeterminado de 2.000 metros y máximo de 5.000.
-- Consulta los registros mediante ArcGIS REST.
-- Normaliza direcciones, modalidades, horarios y coordenadas.
-- Calcula distancias geográficas con Haversine.
-- Ordena los resultados de menor a mayor distancia.
-- Devuelve hasta 10 puntos, conservando el total de coincidencias.
-
-Ante un error técnico del servicio externo, utiliza los registros locales de ChromaDB. Una respuesta válida sin coincidencias no activa el respaldo.
-
-El corpus local distingue también los puntos móviles de 24 horas. Cualquier diferencia de cobertura entre fuentes debe identificarse sin presentar modalidades o datos exclusivos del corpus como resultados de la API.
-
-El resultado incluye:
+Parámetros: coordenadas WGS84 (`EPSG:4326`), radio entero entre 1 y 5000 metros, modalidad `todos|fijo|movil|proximidad`. La respuesta normaliza la información disponible, calcula **Haversine**, ordena por distancia ascendente, limita la presentación a 10 puntos e informa del número total de coincidencias.
 
 ```python
 {
-    "fuente": "api" | "corpus_local",
-    "tipo_solicitado": str,
-    "radio_metros": int,
-    "total_encontrados": int,
-    "puntos": list,
-    "aviso": str | None,
+    "fuente": "api",  # o "corpus_local"
+    "tipo_solicitado": "proximidad",
+    "radio_metros": 2000,
+    "total_encontrados": 0,
+    "puntos": [],
+    "aviso": None,
 }
 ```
 
-Cada punto contiene coordenadas, distancia en metros e información disponible sobre su ubicación y funcionamiento.
+Un fallo técnico de la API habilita una búsqueda sobre los registros locales de ChromaDB. Una **respuesta válida con cero puntos** no debe activar ese respaldo. La fuente aparece en el resultado; el corpus local puede estar desactualizado. Ni Haversine ni el horario documentado calculan rutas o apertura en tiempo real.
 
-No se calculan rutas, tiempos de desplazamiento ni disponibilidad en tiempo real.
+### `hora_actual() -> str`
 
-## 4. Configuración
+Devuelve una marca horaria ISO con zona `Europe/Madrid`. No consulta la red. El resultado permite comparar franjas documentadas, pero no demuestra que una instalación esté operativa.
 
-`config.py` es la fuente central de parámetros operativos del proyecto.
+### `describir_imagen(ruta_imagen: str) -> str`
 
-Incluye:
+Acepta rutas dentro de `assets/`; valida extensión, formato real JPEG/PNG, tamaño máximo de 5 MiB y hasta 16 millones de píxeles. La imagen se envía a Gemini para describir los objetos visibles. **No determina por sí sola un contenedor**; esa atribución requiere evidencia documental.
 
-- Rutas y directorios.
-- Modelos Gemini y parámetros de inferencia.
-- Zona horaria.
-- URLs, timeouts y reintentos.
-- Radios y límites de resultados.
-- Tamaño y formatos admitidos para imágenes.
-- Límites y presupuestos de ejecución.
+La interfaz almacena temporalmente las imágenes subidas dentro de `assets/.streamlit_temporal/` y elimina el archivo al finalizar la consulta. La validación de la tool sigue siendo obligatoria aunque la UI haya comprobado previamente el archivo.
 
-Los módulos importan estos parámetros sin duplicar sus valores.
+## API de ejecución
 
-Las reglas del dominio, algoritmos, esquemas de datos, correspondencias de campos y prompts permanecen en sus módulos correspondientes.
+Para conservar compatibilidad con el RAG y el uso independiente de herramientas:
 
-Las credenciales se obtienen mediante variables de entorno; no se almacenan en `config.py`.
+```python
+ejecutar_tool(nombre: str, args: dict | None = None) -> str
+```
 
-## 5. Ejecución controlada
+El agente usa la variante estructurada con permisos de rol:
 
-Las herramientas se registran mediante `@tool` de LangChain.
+```python
+ejecutar_tool_estructurado(
+    nombre: str,
+    args: dict | None = None,
+    *,
+    rol: Literal["residuos", "puntos"],
+) -> ResultadoTool
+```
 
-El archivo `src/tools/__init__.py` define:
+```python
+{
+    "ok": True,
+    "nombre": "consultar_rag",
+    "datos": {"respuesta": "...", "fuentes": []},
+    "error": None,
+}
+```
 
-- `TOOLS`: lista de herramientas disponibles.
-- `TOOL_BY_NAME`: registro y allowlist por nombre.
-- `ejecutar_tool(nombre, args)`: ejecución de herramientas autorizadas con validación de argumentos y gestión de errores.
+`datos` mantiene su tipo original. No se hace `eval()` ni se parsean representaciones textuales de objetos Python para recuperar un `dict`.
 
-Las herramientas desconocidas y los argumentos no permitidos se rechazan antes de ejecutar.
+## Controles de ejecución
 
-Los límites de iteraciones, el control de llamadas y las trazas corresponden al futuro grafo LangGraph, siguiendo el patrón de los Sprints 12 y 13.
+- La herramienta debe existir en la allowlist global.
+- El rol solo puede utilizar sus herramientas autorizadas.
+- Los nombres y parámetros desconocidos se rechazan antes de la invocación.
+- `src/agent_tool_loop.py` aplica presupuestos en Python de pasos LLM y llamadas reales; el modelo no puede ampliarlos con instrucciones.
+- Una ejecución denegada, fallida o limitada queda reflejada en la traza sin publicar claves ni contenidos íntegros de imágenes.
+- Los fallos técnicos no se presentan como respuestas satisfactorias.
 
-Las herramientas funcionan independientemente del grafo y no dependen de Streamlit.
+## Pruebas
 
-## 6. Alcance
-
-Las herramientas proporcionan capacidades al futuro grafo multiagente, pero no contienen su lógica de orquestación.
-
-La selección de especialistas, memoria conversacional, HITL y presentación de resultados corresponden a otras capas.
-
-La geolocalización voluntaria del usuario se implementará en la interfaz y proporcionará coordenadas a la herramienta geográfica existente.
-
-La cobertura de datos municipales se limita a Madrid ciudad.
-
-## 7. Criterios de aceptación
-
-1. Las cuatro herramientas funcionan independientemente del grafo.
-2. El RAG conserva citas, abstenciones y errores técnicos.
-3. La descripción de imágenes valida los archivos antes de invocar Gemini.
-4. La API geográfica filtra, normaliza, calcula distancias y ordena correctamente.
-5. Los fallos del servicio externo activan el respaldo local identificado.
-6. Una consulta válida sin resultados no se confunde con un error técnico.
-7. Los parámetros operativos se gestionan desde `config.py`.
-8. La allowlist bloquea herramientas y argumentos no autorizados.
-9. Los presupuestos impiden superar el máximo de ejecuciones permitido.
-10. Las trazas identifican las operaciones sin exponer información sensible.
-11. Los tests funcionan con mocks, sin depender de red ni cuotas externas.
-12. La suite completa del RAG continúa funcionando sin regresiones.
-13. Las pruebas de integración reales se realizan por separado.
-14. No se modifican los embeddings ni el índice existente para integrar las herramientas.
+`tests/test_tools_registry.py`, `tests/test_rag_tool.py`, `tests/test_api_puntos_limpios.py`, `tests/test_describir_imagen.py` y `tests/test_hora_actual.py`. Deben cubrir validaciones, permisos, respaldo y diferencias entre fuente real y corpus local con mocks. Las integraciones con servicios externos se comprueban por separado.
