@@ -351,7 +351,7 @@ def _mostrar_geografia(resultados: list[dict[str, Any]]) -> None:
         with st.expander(
             f"Puntos limpios · búsqueda {indice} "
             f"({procedencia}; {cantidad} coincidencias)",
-            expanded=True,
+            expanded=False,
         ):
             if procedencia == "corpus_local":
                 st.warning(

@@ -241,26 +241,88 @@ def _dias_punto(punto: Mapping[str, Any]) -> set[int] | None:
 
 
 def _es_24_horas(punto: Mapping[str, Any]) -> bool:
-    """Solo acepta una modalidad 24 h explícita en el registro."""
+    """Reconoce modalidad 24h o un horario explícito todos los días 24h."""
     tipo = normalizar_texto(str(punto.get("tipo") or ""))
-    if "24h" in tipo or re.search(r"\b24\s*h(?:oras)?\b", tipo):
+    if re.search(r"\b24\s*h(?:oras)?\b", tipo):
         return True
-    return False
+    horario = normalizar_texto(" ".join(
+        str(punto.get(campo) or "")
+        for campo in ("horario_apertura", "horario_cierre")
+    ))
+    dia = normalizar_texto(str(punto.get("dia_semana") or ""))
+    diario = bool(re.search(
+        r"\b(?:todos los dias|de lunes a domingo|lunes a domingo|diario)\b",
+        horario + " " + dia,
+    ))
+    sin_restricciones = bool(re.search(r"\b24\s*(?:h|horas)\b", horario))
+    return diario and sin_restricciones
+
+
+def _intervalos_semanales(
+    punto: Mapping[str, Any],
+) -> dict[int, list[tuple[time, time]]] | None:
+    """Lee horarios municipales con varios días y varias franjas.
+
+    Solo declara días cerrados cuando todos los segmentos relevantes son
+    legibles; si hay cualquier segmento de horas incompleto, se abstiene.
+    """
+    texto = normalizar_texto(str(punto.get("horario_apertura") or ""))
+    patron_dias = re.compile(
+        r"\b(?:todos los dias|(?:de\s+)?lunes\s+a\s+"
+        r"(?:viernes|sabado|domingo)|lunes|martes|miercoles|jueves|"
+        r"viernes|sabados?|domingos?)\b"
+    )
+    etiquetas = list(patron_dias.finditer(texto))
+    if not etiquetas:
+        return None
+    # La fecha es distinta por registro cuando el campo representa un
+    # horario móvil simple, pero puede incluir varias franjas para un día.
+    tabla: dict[int, list[tuple[time, time]]] = {}
+    patron_hora = re.compile(r"(?<!\d)([01]?\d|2[0-3])[:.]([0-5]\d)(?!\d)")
+    for i, etiqueta in enumerate(etiquetas):
+        nombre = etiqueta.group(0).removeprefix("de ")
+        dias = _dias_permitidos(nombre)
+        if dias is None:
+            return None
+        fin = etiquetas[i+1].start() if i+1 < len(etiquetas) else len(texto)
+        segmento = texto[etiqueta.end():fin]
+        horas = [time(int(m.group(1)), int(m.group(2)))
+                 for m in patron_hora.finditer(segmento)]
+        if not horas or len(horas) % 2:
+            return None
+        ventanas = list(zip(horas[::2], horas[1::2]))
+        if any(a == b for a, b in ventanas):
+            return None
+        for dia in dias:
+            tabla.setdefault(dia, []).extend(ventanas)
+    return tabla
 
 
 def estado_horario(punto: Mapping[str, Any], instante: datetime) -> str:
-    """Devuelve 'dentro', 'fuera' o 'desconocido' sin inventar apertura."""
+    """Compara horario documentado con hora real; no confirma apertura física."""
     if _es_24_horas(punto):
         return "dentro"
+
+    # Un horario semanal compuesto debe interpretarse completo, no solo su
+    # primer intervalo. Un domingo omitido queda fuera de horario.
+    tabla = _intervalos_semanales(punto)
+    hoy = instante.weekday()
+    ahora = instante.timetz().replace(tzinfo=None)
+    if tabla is not None:
+        if any(a <= ahora < b for a, b in tabla.get(hoy, []) if a < b):
+            return "dentro"
+        if any(a > b and ahora >= a for a, b in tabla.get(hoy, [])):
+            return "dentro"
+        ayer = (hoy - 1) % 7
+        if any(a > b and ahora < b for a, b in tabla.get(ayer, [])):
+            return "dentro"
+        return "fuera"
 
     franja = _franja_horaria(punto)
     dias = _dias_punto(punto)
     if franja is None or dias is None:
         return "desconocido"
-
     apertura, cierre = franja
-    ahora = instante.timetz().replace(tzinfo=None)
-    hoy = instante.weekday()
     if apertura < cierre:
         coincide = hoy in dias and apertura <= ahora < cierre
     elif apertura > cierre:
@@ -306,14 +368,14 @@ def _tipos_admitidos(estado: Mapping[str, Any]) -> set[str] | None:
 
 def _tipo_normalizado(punto: Mapping[str, Any]) -> str:
     tipo = normalizar_texto(str(punto.get("tipo") or ""))
-    if "24h" in tipo or "24 h" in tipo:
-        return "movil 24h"
-    if "movil" in tipo:
-        return "movil"
     if "proximidad" in tipo:
         return "proximidad"
     if "fijo" in tipo:
         return "fijo"
+    if "movil" in tipo:
+        if "24h" in tipo or "24 h" in tipo:
+            return "movil 24h"
+        return "movil"
     return "otro"
 
 

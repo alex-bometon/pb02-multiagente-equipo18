@@ -26,6 +26,7 @@ from src.agent_schedule import (
     anexos_temporales,
     debe_buscar_puntos_automaticamente,
 )
+from src.agent_resultado import respuesta_geografica_integrada
 from src.agent_tool_loop import (
     _consulta_proximidad,
     ejecutar_especialista,
@@ -483,10 +484,18 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
         raise RuntimeError("Síntesis fuera de la ruta autorizada.")
 
     evidencia, motivo = _evidencia_suficiente(estado)
+    integrada = (
+        respuesta_geografica_integrada(estado)
+        if evidencia == "suficiente" and not _hay_fallo_bloqueante(estado)
+        else None
+    )
     limitaciones = deepcopy(estado["limitaciones"])
     modo = "directo"
 
-    if evidencia == "insuficiente":
+    if integrada is not None:
+        respuesta, plan = integrada
+        modo = "integrado"
+    elif evidencia == "insuficiente":
         if _hay_fallo_bloqueante(estado):
             raise RuntimeError(
                 "No se pudo obtener evidencia por un fallo técnico."
@@ -536,33 +545,37 @@ def sintetizar(estado: EstadoGrafo) -> dict[str, Any]:
                     "No se pudo generar un plan válido para el HITL."
                 ) from exc
 
-    anexo, fuentes_horario = anexos_temporales(estado)
-    tiene_geo = any(
-        isinstance(e, dict)
-        and e.get("herramienta") == "buscar_puntos_limpios_cercanos"
-        and isinstance(e.get("datos"), dict)
-        for e in estado["evidencias"]
-    )
-    if anexo and tiene_geo:
-        # Evitar una recomendación LLM contradictoria con la
-        # priorización temporal comprobada por Python.
-        clasificaciones = [
-            e["datos"]["respuesta"].strip()
-            for e in estado["evidencias"]
-            if isinstance(e, dict)
-            and e.get("rol") == "residuos"
-            and e.get("herramienta") == "consultar_rag"
+    if integrada is None:
+        anexo, fuentes_horario = anexos_temporales(estado)
+        tiene_geo = any(
+            isinstance(e, dict)
+            and e.get("herramienta") == "buscar_puntos_limpios_cercanos"
             and isinstance(e.get("datos"), dict)
-            and e["datos"].get("abstencion") is False
-            and isinstance(e["datos"].get("respuesta"), str)
-            and e["datos"].get("fuentes")
-        ]
-        if clasificaciones:
-            respuesta = "\n\n".join(clasificaciones)
-        elif not estado["necesita_residuos"]:
-            respuesta = ""
-    if anexo:
-        respuesta = (respuesta.rstrip() + "\n\n" + anexo).strip()
+            for e in estado["evidencias"]
+        )
+        if anexo and tiene_geo:
+            # Evitar una recomendación LLM contradictoria con la
+            # priorización temporal comprobada por Python.
+            clasificaciones = [
+                e["datos"]["respuesta"].strip()
+                for e in estado["evidencias"]
+                if isinstance(e, dict)
+                and e.get("rol") == "residuos"
+                and e.get("herramienta") == "consultar_rag"
+                and isinstance(e.get("datos"), dict)
+                and e["datos"].get("abstencion") is False
+                and isinstance(e["datos"].get("respuesta"), str)
+                and e["datos"].get("fuentes")
+            ]
+            if clasificaciones:
+                respuesta = "\n\n".join(clasificaciones)
+            elif not estado["necesita_residuos"]:
+                respuesta = ""
+        if anexo:
+            respuesta = (respuesta.rstrip() + "\n\n" + anexo).strip()
+
+    else:
+        fuentes_horario = []
 
     return {
         "respuesta": respuesta.strip(),
